@@ -1,7 +1,13 @@
-tab:	here
-line1
-line2
-quote:"quoted"
-backslash:\
-Aé😀
-
+hello, gable
+12
+true
+true
+padded
+-42
+true
+1234
+false
+7
+false
+gable
+false

@@ -196,3 +196,33 @@ GABLE_TEST(lexer_diagnostic_caret_points_at_problem) {
   GABLE_CHECK(diagnostics.find("test.gable:2:15: error:") != std::string::npos);
   GABLE_CHECK(diagnostics.find("^") != std::string::npos);
 }
+
+GABLE_TEST(lexer_tokenizes_v02_keywords_and_punctuation) {
+  std::string diagnostics;
+  const auto tokens =
+      lexAll("struct import as break continue for in [ ] . ..", diagnostics);
+  GABLE_CHECK_EQ(std::string(""), diagnostics);
+  const std::vector<TokenKind> kinds = kindsOf(tokens);
+  GABLE_CHECK(kinds[0] == TokenKind::KwStruct);
+  GABLE_CHECK(kinds[1] == TokenKind::KwImport);
+  GABLE_CHECK(kinds[2] == TokenKind::KwAs);
+  GABLE_CHECK(kinds[3] == TokenKind::KwBreak);
+  GABLE_CHECK(kinds[4] == TokenKind::KwContinue);
+  GABLE_CHECK(kinds[5] == TokenKind::KwFor);
+  GABLE_CHECK(kinds[6] == TokenKind::KwIn);
+  GABLE_CHECK(kinds[7] == TokenKind::LBracket);
+  GABLE_CHECK(kinds[8] == TokenKind::RBracket);
+  GABLE_CHECK(kinds[9] == TokenKind::Dot);
+  GABLE_CHECK(kinds[10] == TokenKind::DotDot);
+  GABLE_CHECK(kinds.back() == TokenKind::EndOfFile);
+}
+
+GABLE_TEST(lexer_does_not_split_range_after_integer) {
+  std::string diagnostics;
+  const auto tokens = lexAll("0..10", diagnostics);
+  GABLE_CHECK_EQ(std::string(""), diagnostics);
+  GABLE_CHECK_EQ(std::size_t(4), tokens.size());
+  GABLE_CHECK_EQ(std::uint64_t(0), tokens[0].integerValue);
+  GABLE_CHECK(tokens[1].kind == TokenKind::DotDot);
+  GABLE_CHECK_EQ(std::uint64_t(10), tokens[2].integerValue);
+}

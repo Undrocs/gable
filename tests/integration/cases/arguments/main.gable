@@ -1,0 +1,10 @@
+fn main() -> i32 {
+    print(arg_count());
+    if arg_count() > 1 {
+        print(arg(1));
+    }
+    if arg_count() > 2 {
+        print(arg(2));
+    }
+    return 0;
+}

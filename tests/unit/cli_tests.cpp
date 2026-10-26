@@ -113,7 +113,7 @@ GABLE_TEST(cli_rejects_output_option_with_run) {
 GABLE_TEST(cli_reports_missing_input_file) {
   const Run run = runCli({"build", "/nonexistent/path/to/program.gable"});
   GABLE_CHECK_EQ(1, run.exitCode);
-  GABLE_CHECK(run.err.find("cannot open source file") != std::string::npos);
+  GABLE_CHECK(run.err.find("cannot read '/nonexistent/path/to/program.gable'") != std::string::npos);
 }
 
 GABLE_TEST(cli_emit_c_writes_translation_unit_to_stdout) {
@@ -121,7 +121,7 @@ GABLE_TEST(cli_emit_c_writes_translation_unit_to_stdout) {
   const std::string source = writeSource(directory, "ok.gable", gabletest::kSimpleProgram());
   const Run run = runCli({"build", source, "--emit-c"});
   GABLE_CHECK_EQ(0, run.exitCode);
-  GABLE_CHECK(run.out.find("#include <gable/rt.h>") != std::string::npos);
+  GABLE_CHECK(run.out.find("#include \"gable/rt.h\"") != std::string::npos);
   GABLE_CHECK(run.out.find("gable_fn_main") != std::string::npos);
   GABLE_CHECK_EQ(std::string(""), run.err);
 }
@@ -287,4 +287,62 @@ GABLE_TEST(cli_verbose_reports_produced_executable) {
   GABLE_CHECK_EQ(0, run.exitCode);
   GABLE_CHECK(run.err.find("gable: running:") != std::string::npos);
   GABLE_CHECK(run.out.find("gable: produced ") != std::string::npos);
+}
+
+GABLE_TEST(cli_check_accepts_a_valid_program) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "valid.gable", gabletest::kSimpleProgram());
+  const Run run = runCli({"check", source});
+  GABLE_CHECK_EQ(0, run.exitCode);
+  GABLE_CHECK_EQ(std::string(""), run.err);
+  GABLE_CHECK_EQ(std::string(""), run.out);
+  // 'check' writes no output at all.
+  GABLE_CHECK(!std::ifstream(directory.file("valid")).good());
+}
+
+GABLE_TEST(cli_check_reports_type_errors) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source =
+      writeSource(directory, "invalid.gable", "fn main() -> i32 { return missing; }\n");
+  const Run run = runCli({"check", source});
+  GABLE_CHECK_EQ(1, run.exitCode);
+  GABLE_CHECK(run.err.find("undefined variable 'missing'") != std::string::npos);
+  GABLE_CHECK(run.err.find("1 error(s) in ") != std::string::npos);
+}
+
+GABLE_TEST(cli_check_reports_syntax_errors) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source =
+      writeSource(directory, "broken.gable", "fn main() -> i32 { return 0 }\n");
+  const Run run = runCli({"check", source});
+  GABLE_CHECK_EQ(1, run.exitCode);
+  GABLE_CHECK(run.err.find("expected ';'") != std::string::npos);
+}
+
+GABLE_TEST(cli_check_rejects_output_options) {
+  GABLE_CHECK_EQ(2, runCli({"check", "a.gable", "-o", "out"}).exitCode);
+  GABLE_CHECK_EQ(2, runCli({"check", "a.gable", "--emit-c"}).exitCode);
+  GABLE_CHECK_EQ(2, runCli({"check", "a.gable", "--", "arg"}).exitCode);
+}
+
+GABLE_TEST(cli_run_forwards_arguments_after_double_dash) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(
+      directory, "args.gable",
+      "fn main() -> i32 {\n"
+      "  if arg_count() != 3 { return 1; }\n"
+      "  if arg(1) != \"first\" { return 2; }\n"
+      "  if arg(2) != \"second\" { return 3; }\n"
+      "  return 0;\n"
+      "}\n");
+  const Run run = runCli({"run", source, "--", "first", "second"});
+  GABLE_CHECK_EQ(0, run.exitCode);
+}
+
+GABLE_TEST(cli_run_forwards_the_program_exit_status) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source =
+      writeSource(directory, "status.gable", "fn main() -> i32 { return 7; }\n");
+  const Run run = runCli({"run", source});
+  GABLE_CHECK_EQ(7, run.exitCode);
 }

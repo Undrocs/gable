@@ -1,0 +1,2 @@
+struct 'Point' has no field 'z'
+available fields: x: i32, y: i32

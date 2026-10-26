@@ -1,0 +1,22 @@
+fn sum(values: [i32; 4]) -> i32 {
+    var total: i32 = 0;
+    for value in values {
+        total = total + value;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    var values: [i32; 4] = [1, 2, 3, 4];
+    values[2] = 30;
+    print(values[2]);
+    print(values.len);
+    print(sum(values));
+
+    let table: [[i32; 2]; 2] = [[1, 2], [3, 4]];
+    print(table[1][0]);
+
+    let words: [str; 2] = ["a", "b"];
+    print(words[1].len);
+    return 0;
+}

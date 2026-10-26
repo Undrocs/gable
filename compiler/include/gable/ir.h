@@ -1,9 +1,10 @@
 // Gable compiler -- typed intermediate representation.
 //
 // Semantic analysis lowers the AST into this representation. Types, operators,
-// and variable slots are fully resolved: code generation never performs name
-// lookup or type inference. The tree is structured (no basic blocks), which is
-// sufficient for v0.1 and maps directly onto either structured LLVM IR or C.
+// local slots, struct layouts, and callee indices are fully resolved: code
+// generation never performs name lookup or type inference. The tree is
+// structured (no basic blocks), which keeps lowering direct and is sufficient
+// for both the C and a future LLVM backend.
 #ifndef GABLE_IR_H
 #define GABLE_IR_H
 
@@ -19,10 +20,10 @@
 namespace gable::ir {
 
 enum class TypeKind {
-  Error,  // produced by a failed type check; suppresses follow-on diagnostics
+  Error,  // produced by a failed check; suppresses follow-on diagnostics
   Void,
   Bool,
-  Str,
+  Str,  // immutable UTF-8 byte sequence with an explicit length
   I8,
   I16,
   I32,
@@ -31,31 +32,37 @@ enum class TypeKind {
   U16,
   U32,
   U64,
+  Struct,
+  Array,
 };
 
-/// A resolved type. Types in Gable v0.1 are a closed set of builtins, so this
-/// is a plain value type rather than an interned node.
+/// Builtin functions. They are part of the language surface and are lowered to
+/// calls into the runtime or, for `print`, to a runtime call selected by the
+/// operand type.
+enum class Builtin {
+  None,
+  Print,
+  Eprint,
+  ArgCount,
+  Arg,
+  FsReadText,
+  FsWriteText,
+  StrOfI64,
+  StrOfBool,
+  ParseI64,
+  Find,
+  Slice,
+  Trim,
+};
+
 class Type {
  public:
   constexpr Type() = default;
-  constexpr explicit Type(TypeKind kind) : kind_(kind) {}
 
-  TypeKind kind() const { return kind_; }
-  bool isValid() const { return kind_ != TypeKind::Error; }
-  bool isInteger() const;
-  bool isSigned() const;
-  /// Bit width for integer types; 0 for non-integers.
-  unsigned bitWidth() const;
-  /// Human-readable spelling, e.g. "i32". Returns "error" for TypeKind::Error.
-  std::string name() const;
-
-  bool operator==(const Type& other) const { return kind_ == other.kind_; }
-  bool operator!=(const Type& other) const { return kind_ != other.kind_; }
-
-  /// Parses a source-level type name. Returns TypeKind::Error for unknown names.
-  static Type fromSourceName(std::string_view name);
-  static bool isKnownSourceName(std::string_view name);
-
+  static constexpr Type error() { return Type(TypeKind::Error); }
+  static constexpr Type voidType() { return Type(TypeKind::Void); }
+  static constexpr Type boolean() { return Type(TypeKind::Bool); }
+  static constexpr Type str() { return Type(TypeKind::Str); }
   static constexpr Type i8() { return Type(TypeKind::I8); }
   static constexpr Type i16() { return Type(TypeKind::I16); }
   static constexpr Type i32() { return Type(TypeKind::I32); }
@@ -64,14 +71,83 @@ class Type {
   static constexpr Type u16() { return Type(TypeKind::U16); }
   static constexpr Type u32() { return Type(TypeKind::U32); }
   static constexpr Type u64() { return Type(TypeKind::U64); }
-  static constexpr Type boolean() { return Type(TypeKind::Bool); }
-  static constexpr Type str() { return Type(TypeKind::Str); }
-  static constexpr Type voidType() { return Type(TypeKind::Void); }
-  static constexpr Type error() { return Type(TypeKind::Error); }
+  static constexpr Type structType(std::uint32_t index) {
+    Type type(TypeKind::Struct);
+    type.index_ = index;
+    return type;
+  }
+  static constexpr Type arrayType(std::uint32_t index) {
+    Type type(TypeKind::Array);
+    type.index_ = index;
+    return type;
+  }
+
+  TypeKind kind() const { return kind_; }
+  /// Struct index for TypeKind::Struct, array index for TypeKind::Array.
+  std::uint32_t index() const { return index_; }
+
+  bool isValid() const { return kind_ != TypeKind::Error; }
+  bool isInteger() const;
+  bool isSigned() const;
+  bool isAggregate() const { return kind_ == TypeKind::Struct || kind_ == TypeKind::Array; }
+  bool isScalar() const {
+    return isInteger() || kind_ == TypeKind::Bool || kind_ == TypeKind::Str;
+  }
+  /// Bit width for integer types; 0 for everything else.
+  unsigned bitWidth() const;
+
+  bool operator==(const Type& other) const {
+    return kind_ == other.kind_ && index_ == other.index_;
+  }
+  bool operator!=(const Type& other) const { return !(*this == other); }
+
+  /// Parses a built-in type name. Returns TypeKind::Error for anything else.
+  static Type fromSourceName(std::string_view name);
+  static bool isScalarSourceName(std::string_view name);
 
  private:
+  constexpr explicit Type(TypeKind kind) : kind_(kind) {}
+
   TypeKind kind_ = TypeKind::Error;
+  std::uint32_t index_ = 0;
 };
+
+struct StructField {
+  std::string name;
+  Type type;
+  SourceSpan span;
+};
+
+struct StructInfo {
+  std::string name;
+  SourceSpan span;
+  std::uint32_t file = 0;
+  std::vector<StructField> fields;
+  /// Prelude structs describe values returned by builtin functions. The runtime
+  /// header defines their C layout, so code generation does not declare them.
+  bool fromPrelude = false;
+};
+
+/// Interns array types and records their element type and length, so an array
+/// type is identified by a single index.
+class TypeTable {
+ public:
+  Type array(Type element, std::uint64_t length);
+  Type element(Type type) const;
+  std::uint64_t length(Type type) const;
+
+ private:
+  struct Entry {
+    Type element;
+    std::uint64_t length = 0;
+  };
+  std::vector<Entry> entries_;
+};
+
+struct Module;
+
+/// Human-readable spelling of a type, e.g. `i32`, `Point`, `[str; 4]`.
+std::string typeName(Type type, const Module& module);
 
 struct Expr;
 using ExprPtr = std::unique_ptr<Expr>;
@@ -85,6 +161,12 @@ struct Expr {
     Unary,
     Binary,
     Call,
+    StructInit,
+    FieldAccess,
+    Index,
+    Cast,
+    ArrayLiteral,
+    Length,  // `.len` of a string (bytes) or array (elements)
   };
 
   Expr(Kind nodeKind, Type nodeType, SourceSpan nodeSpan)
@@ -94,26 +176,32 @@ struct Expr {
   Type type;
   SourceSpan span;
 
-  // IntegerLiteral: two's-complement bit pattern of the literal value. The
-  // value is guaranteed by semantic analysis to fit `type`.
+  /// IntegerLiteral: two's-complement bit pattern that fits `type`.
   std::uint64_t integerValue = 0;
-  // BoolLiteral
+  /// BoolLiteral
   bool boolValue = false;
-  // StringLiteral: decoded UTF-8 bytes, NUL-terminated at runtime.
+  /// StringLiteral: decoded UTF-8 bytes. May contain any byte except NUL.
   std::string stringValue;
-  // Local: index into the enclosing function's local table.
+  /// Local: index into the enclosing function's local table.
   std::uint32_t slot = 0;
-  // Call: callee name, retained for readable generated code only.
+  /// Call/StructInit/FieldAccess: name, kept for readable generated C only.
   std::string name;
-  // Unary / Binary
+  /// Unary and Binary operator.
   UnaryOp unaryOp = UnaryOp::Negate;
   BinaryOp binaryOp = BinaryOp::Add;
+  /// Unary: lhs. Binary: lhs and rhs. FieldAccess/Index/Length/Cast: lhs.
+  /// Index: rhs is the subscript.
   ExprPtr lhs;
   ExprPtr rhs;
-  // Call: index into Module::functions, or the print builtin.
+  /// Call arguments, StructInit field values in declaration order,
+  /// ArrayLiteral elements.
   std::vector<ExprPtr> arguments;
+  /// Call: index into Module::functions.
   std::uint32_t calleeIndex = 0;
-  bool callsPrintBuiltin = false;
+  /// Call: set for builtins.
+  Builtin builtin = Builtin::None;
+  /// StructInit and FieldAccess: field index within the struct.
+  std::uint32_t fieldIndex = 0;
 };
 
 struct Stmt;
@@ -121,13 +209,17 @@ using StmtPtr = std::unique_ptr<Stmt>;
 
 struct Stmt {
   enum class Kind {
-    Let,     // slot = <n>, type, isMutable, expression = initializer
-    Assign,  // slot = <n>, expression = new value
-    Expr,    // expression = expression statement
-    Return,  // expression = returned value, or null for `return;`
-    If,      // expression = condition, body, optional elseBody
-    While,   // expression = condition, body
-    Block,   // body
+    Let,       // slot, type, isMutable, value = initializer (may be null)
+    Assign,    // target = lvalue, value = new value
+    Expr,      // value = expression statement
+    Return,    // value = returned value, or null for `return;`
+    If,        // value = condition, body, optional elseBody
+    While,     // value = condition, body
+    ForRange,  // slot/type = loop variable, value = start, limit = exclusive end
+    ForEach,   // slot/type = element copy, value = array, body
+    Block,     // body
+    Break,
+    Continue,
   };
 
   Stmt(Kind nodeKind, SourceSpan nodeSpan) : kind(nodeKind), span(nodeSpan) {}
@@ -138,10 +230,15 @@ struct Stmt {
   std::uint32_t slot = 0;
   Type type;
   bool isMutable = false;
-  // Name is retained for diagnostics and readable generated code only.
+  /// Retained for diagnostics and readable generated code only.
   std::string name;
 
-  ExprPtr expression;
+  ExprPtr value;
+  /// Assign: the assigned lvalue.
+  ExprPtr target;
+  /// ForRange: exclusive upper bound, evaluated once before the loop.
+  ExprPtr limit;
+
   std::vector<StmtPtr> body;
   std::vector<StmtPtr> elseBody;
   bool hasElse = false;
@@ -158,17 +255,21 @@ struct LocalVariable {
 struct Function {
   std::string name;
   SourceSpan span;
+  std::uint32_t file = 0;
   Type returnType;
   /// Parameters occupy the first `parameterCount` entries.
   std::vector<LocalVariable> locals;
   std::uint32_t parameterCount = 0;
   std::vector<StmtPtr> body;
   bool isEntryPoint = false;
-
-  const LocalVariable& parameter(std::uint32_t index) const { return locals[index]; }
 };
 
 struct Module {
+  /// Every struct of the program in declaration order, prelude structs first.
+  std::vector<std::unique_ptr<StructInfo>> structs;
+  TypeTable types;
+  /// Every function of the program in declaration order. A call refers to its
+  /// callee by index into this vector.
   std::vector<std::unique_ptr<Function>> functions;
 };
 

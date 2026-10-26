@@ -1,0 +1,9 @@
+import "shape.gable";
+import "util.gable";
+
+fn main() -> i32 {
+    let square: Shape = Shape(3, 4);
+    print(area(square));
+    print(shout("done"));
+    return 0;
+}

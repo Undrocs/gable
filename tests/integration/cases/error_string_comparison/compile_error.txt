@@ -1,1 +1,0 @@
-string comparison is not available

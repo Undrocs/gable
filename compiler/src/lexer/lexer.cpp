@@ -24,6 +24,10 @@ constexpr KeywordEntry kKeywords[] = {
     {"u16", TokenKind::KwU16},       {"u32", TokenKind::KwU32},
     {"u64", TokenKind::KwU64},       {"bool", TokenKind::KwBool},
     {"str", TokenKind::KwStr},       {"void", TokenKind::KwVoid},
+    {"struct", TokenKind::KwStruct}, {"import", TokenKind::KwImport},
+    {"as", TokenKind::KwAs},         {"break", TokenKind::KwBreak},
+    {"continue", TokenKind::KwContinue},
+    {"for", TokenKind::KwFor},       {"in", TokenKind::KwIn},
 };
 
 bool isAsciiDigit(char c) { return c >= '0' && c <= '9'; }
@@ -118,6 +122,13 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::KwWhile: return "'while'";
     case TokenKind::KwTrue: return "'true'";
     case TokenKind::KwFalse: return "'false'";
+    case TokenKind::KwStruct: return "'struct'";
+    case TokenKind::KwImport: return "'import'";
+    case TokenKind::KwAs: return "'as'";
+    case TokenKind::KwBreak: return "'break'";
+    case TokenKind::KwContinue: return "'continue'";
+    case TokenKind::KwFor: return "'for'";
+    case TokenKind::KwIn: return "'in'";
     case TokenKind::KwI8: return "'i8'";
     case TokenKind::KwI16: return "'i16'";
     case TokenKind::KwI32: return "'i32'";
@@ -133,9 +144,13 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::RParen: return "')'";
     case TokenKind::LBrace: return "'{'";
     case TokenKind::RBrace: return "'}'";
+    case TokenKind::LBracket: return "'['";
+    case TokenKind::RBracket: return "']'";
     case TokenKind::Comma: return "','";
     case TokenKind::Colon: return "':'";
     case TokenKind::Semicolon: return "';'";
+    case TokenKind::Dot: return "'.'";
+    case TokenKind::DotDot: return "'..'";
     case TokenKind::Arrow: return "'->'";
     case TokenKind::Plus: return "'+'";
     case TokenKind::Minus: return "'-'";
@@ -158,8 +173,8 @@ const char* tokenKindName(TokenKind kind) {
   return "token";
 }
 
-Lexer::Lexer(const SourceFile& source, DiagnosticEngine& diagnostics)
-    : source_(source), diagnostics_(diagnostics) {}
+Lexer::Lexer(const SourceFile& source, Diagnostics& diagnostics, std::uint32_t file)
+    : source_(source), diagnostics_(diagnostics), file_(file) {}
 
 char Lexer::peek(std::size_t lookahead) const {
   const std::size_t index = offset_ + lookahead;
@@ -205,7 +220,7 @@ void Lexer::skipWhitespaceAndComments() {
         }
       }
       if (depth > 0) {
-        diagnostics_.error(SourceSpan{start, offset_}, "unterminated block comment");
+        diagnostics_.error(file_, SourceSpan{start, offset_}, "unterminated block comment");
       }
       continue;
     }
@@ -221,7 +236,7 @@ std::vector<Token> Lexer::tokenize() {
   for (std::size_t i = 0; i < source_.text().size();) {
     const std::size_t length = utf8SequenceLength(source_.text(), i);
     if (length == 0) {
-      diagnostics_.error(SourceSpan{i, i + 1}, "invalid UTF-8 byte sequence in source file");
+      diagnostics_.error(file_, SourceSpan{i, i + 1}, "invalid UTF-8 byte sequence in source file");
       ++i;
     } else {
       i += length;
@@ -260,6 +275,11 @@ void Lexer::scanToken(std::vector<Token>& tokens) {
     case ')': push(TokenKind::RParen); return;
     case '{': push(TokenKind::LBrace); return;
     case '}': push(TokenKind::RBrace); return;
+    case '[': push(TokenKind::LBracket); return;
+    case ']': push(TokenKind::RBracket); return;
+    case '.':
+      push(match('.') ? TokenKind::DotDot : TokenKind::Dot);
+      return;
     case ',': push(TokenKind::Comma); return;
     case ':': push(TokenKind::Colon); return;
     case ';': push(TokenKind::Semicolon); return;
@@ -324,17 +344,17 @@ void Lexer::scanToken(std::vector<Token>& tokens) {
       return;
     }
     offset_ = start + length;
-    diagnostics_.error(SourceSpan{start, offset_},
+    diagnostics_.error(file_, SourceSpan{start, offset_},
                        "non-ASCII character is not allowed outside a string literal");
     return;
   }
 
   if (c == '\0') {
-    diagnostics_.error(SourceSpan{start, offset_},
+    diagnostics_.error(file_, SourceSpan{start, offset_},
                        "NUL byte is not allowed in a source file");
     return;
   }
-  diagnostics_.error(SourceSpan{start, offset_}, std::string("unexpected character '") + c + "'");
+  diagnostics_.error(file_, SourceSpan{start, offset_}, std::string("unexpected character '") + c + "'");
 }
 
 void Lexer::scanNumber(std::vector<Token>& tokens) {
@@ -356,13 +376,13 @@ void Lexer::scanNumber(std::vector<Token>& tokens) {
   if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
     offset_ += 2;
     if (!isHexDigit(peek())) {
-      diagnostics_.error(spanFrom(start), "hexadecimal literal requires at least one digit");
+      diagnostics_.error(file_, spanFrom(start), "hexadecimal literal requires at least one digit");
     }
     accumulate(16, [](char c) -> std::uint64_t { return isHexDigit(c) ? hexValue(c) : 16; });
   } else if (peek() == '0' && (peek(1) == 'b' || peek(1) == 'B')) {
     offset_ += 2;
     if (peek() != '0' && peek() != '1') {
-      diagnostics_.error(spanFrom(start), "binary literal requires at least one digit");
+      diagnostics_.error(file_, spanFrom(start), "binary literal requires at least one digit");
     }
     accumulate(2, [](char c) -> std::uint64_t {
       return (c == '0' || c == '1') ? static_cast<std::uint64_t>(c - '0') : 2;
@@ -387,12 +407,12 @@ void Lexer::scanNumber(std::vector<Token>& tokens) {
     while (isIdentifierContinue(peek())) {
       ++offset_;
     }
-    diagnostics_.error(spanFrom(start),
+    diagnostics_.error(file_, spanFrom(start),
                        "invalid numeric literal: unexpected character after digits");
   }
 
   if (overflowed) {
-    diagnostics_.error(spanFrom(start), "integer literal does not fit in 64 bits");
+    diagnostics_.error(file_, spanFrom(start), "integer literal does not fit in 64 bits");
     value = 0;
   }
 
@@ -457,7 +477,7 @@ void Lexer::scanString(std::vector<Token>& tokens) {
       case 't': value.push_back('\t'); break;
       case 'r': value.push_back('\r'); break;
       case '0':
-        diagnostics_.error(SourceSpan{charStart, offset_},
+        diagnostics_.error(file_, SourceSpan{charStart, offset_},
                            "NUL characters are not supported in string literals because 'str' is "
                            "NUL-terminated");
         break;
@@ -478,11 +498,11 @@ void Lexer::scanString(std::vector<Token>& tokens) {
           }
           if (!match('}') || digits == 0 || codePoint > 0x10FFFF ||
               (codePoint >= 0xD800 && codePoint <= 0xDFFF)) {
-            diagnostics_.error(SourceSpan{charStart, offset_},
+            diagnostics_.error(file_, SourceSpan{charStart, offset_},
                                "invalid Unicode escape; expected \\u{XXXX} with a code point "
                                "up to 10FFFF excluding surrogates");
           } else if (codePoint == 0) {
-            diagnostics_.error(SourceSpan{charStart, offset_},
+            diagnostics_.error(file_, SourceSpan{charStart, offset_},
                                "NUL characters are not supported in string literals because "
                                "'str' is NUL-terminated");
           } else {
@@ -495,30 +515,30 @@ void Lexer::scanString(std::vector<Token>& tokens) {
             codePoint = codePoint * 16 + hexValue(advance());
           }
           if (codePoint >= 0xD800 && codePoint <= 0xDFFF) {
-            diagnostics_.error(SourceSpan{charStart, offset_},
+            diagnostics_.error(file_, SourceSpan{charStart, offset_},
                                "invalid Unicode escape; surrogate code points are not allowed");
           } else if (codePoint == 0) {
-            diagnostics_.error(SourceSpan{charStart, offset_},
+            diagnostics_.error(file_, SourceSpan{charStart, offset_},
                                "NUL characters are not supported in string literals because "
                                "'str' is NUL-terminated");
           } else {
             appendUtf8(value, codePoint);
           }
         } else {
-          diagnostics_.error(SourceSpan{charStart, offset_},
+          diagnostics_.error(file_, SourceSpan{charStart, offset_},
                              "invalid Unicode escape; expected \\u{XXXX} or \\uXXXX");
         }
         break;
       }
       default:
-        diagnostics_.error(SourceSpan{charStart, offset_},
+        diagnostics_.error(file_, SourceSpan{charStart, offset_},
                            std::string("unknown escape sequence '\\") + escape + "'");
         break;
     }
   }
 
   if (!terminated) {
-    diagnostics_.error(SourceSpan{start, offset_}, "unterminated string literal");
+    diagnostics_.error(file_, SourceSpan{start, offset_}, "unterminated string literal");
   }
 
   Token token;

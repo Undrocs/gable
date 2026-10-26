@@ -1,0 +1,27 @@
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Line {
+    start: Point,
+    end: Point,
+}
+
+fn length_squared(line: Line) -> i32 {
+    let dx: i32 = line.end.x - line.start.x;
+    let dy: i32 = line.end.y - line.start.y;
+    return dx * dx + dy * dy;
+}
+
+fn main() -> i32 {
+    var point: Point = Point(1, 2);
+    point.x = point.x + 10;
+    print(point.x);
+    print(point.y);
+
+    let line: Line = Line(Point(0, 0), Point(3, 4));
+    print(length_squared(line));
+    print(line.end.y);
+    return 0;
+}

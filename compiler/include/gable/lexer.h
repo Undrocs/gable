@@ -2,6 +2,7 @@
 #ifndef GABLE_LEXER_H
 #define GABLE_LEXER_H
 
+#include <cstdint>
 #include <vector>
 
 #include "gable/diagnostics.h"
@@ -17,7 +18,7 @@ namespace gable {
 /// several errors. The returned vector always ends with an EndOfFile token.
 class Lexer {
  public:
-  Lexer(const SourceFile& source, DiagnosticEngine& diagnostics);
+  Lexer(const SourceFile& source, Diagnostics& diagnostics, std::uint32_t file);
 
   std::vector<Token> tokenize();
 
@@ -36,7 +37,8 @@ class Lexer {
   SourceSpan spanFrom(std::size_t begin) const { return SourceSpan{begin, offset_}; }
 
   const SourceFile& source_;
-  DiagnosticEngine& diagnostics_;
+  Diagnostics& diagnostics_;
+  std::uint32_t file_;
   std::size_t offset_ = 0;
 };
 

@@ -62,7 +62,10 @@ endif()
 # Runtime (C17)
 # ---------------------------------------------------------------------------
 add_library(gable_runtime STATIC
+  runtime/src/args.c
+  runtime/src/fs.c
   runtime/src/io.c
+  runtime/src/string.c
   runtime/src/trap.c
 )
 target_include_directories(gable_runtime PUBLIC
@@ -87,6 +90,7 @@ add_library(gable_compiler STATIC
   compiler/src/types/operators.cpp
   compiler/src/codegen/c_backend.cpp
   compiler/src/driver/frontend.cpp
+  compiler/src/driver/loader.cpp
   compiler/src/platform/posix.cpp
   compiler/src/driver/output.cpp
   compiler/src/driver/process.cpp

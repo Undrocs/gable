@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    let values: [i32; 2] = [1, 2];
+    print(values["one"]);
+    return 0;
+}

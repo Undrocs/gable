@@ -1,0 +1,25 @@
+fn main() -> i32 {
+    let path: str = arg(1);
+
+    let written = fs_write_text(path, "line one\nline two\n");
+    if !written.ok {
+        eprint(written.error);
+        return 1;
+    }
+
+    let read = fs_read_text(path);
+    if !read.ok {
+        eprint(read.error);
+        return 1;
+    }
+    print(read.text.len);
+    print(read.text);
+
+    let missing = fs_read_text(arg(1) + ".missing");
+    if missing.ok {
+        print("unexpected success");
+    } else {
+        print("missing file reported an error");
+    }
+    return 0;
+}

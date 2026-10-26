@@ -34,8 +34,8 @@ constexpr int kMaxNestingDepth = 200;
 
 }  // namespace
 
-Parser::Parser(const std::vector<Token>& tokens, DiagnosticEngine& diagnostics)
-    : tokens_(tokens), diagnostics_(diagnostics) {}
+Parser::Parser(const std::vector<Token>& tokens, Diagnostics& diagnostics, std::uint32_t fileIndex)
+    : tokens_(tokens), diagnostics_(diagnostics), file_(fileIndex) {}
 
 Parser::DepthGuard::DepthGuard(Parser& owner) : parser(owner) { ++parser.depth_; }
 
@@ -47,10 +47,18 @@ bool Parser::depthExceeded(const char* context) {
   }
   if (!depthLimitExceeded_) {
     depthLimitExceeded_ = true;
-    diagnostics_.error(current().span, std::string(context) + " is nested too deeply (limit " +
-                                           std::to_string(kMaxNestingDepth) + " levels)");
+    error(current().span, std::string(context) + " is nested too deeply (limit " +
+                              std::to_string(kMaxNestingDepth) + " levels)");
   }
   return true;
+}
+
+void Parser::error(SourceSpan span, std::string message) {
+  diagnostics_.error(file_, span, std::move(message));
+}
+
+void Parser::note(SourceSpan span, std::string message) {
+  diagnostics_.note(file_, span, std::move(message));
 }
 
 const Token& Parser::peek(std::size_t lookahead) const {
@@ -84,29 +92,69 @@ const Token& Parser::expect(TokenKind kind, const char* context) {
     return advance();
   }
   const Token& found = current();
-  diagnostics_.error(found.span, std::string("expected ") + tokenKindName(kind) + " " + context +
-                                     ", found " + tokenKindName(found.kind));
+  error(found.span, std::string("expected ") + tokenKindName(kind) + " " + context + ", found " +
+                        tokenKindName(found.kind));
   return found;
 }
 
 ast::Program Parser::parseProgram() {
   ast::Program program;
   while (!check(TokenKind::EndOfFile) && !depthLimitExceeded_) {
-    if (check(TokenKind::KwFn)) {
-      auto function = parseFunction();
-      if (function) {
-        program.functions.push_back(std::move(function));
+    switch (current().kind) {
+      case TokenKind::KwImport:
+        parseImport(program);
+        continue;
+      case TokenKind::KwFn: {
+        sawDeclaration_ = true;
+        auto function = parseFunction();
+        if (function) {
+          program.functions.push_back(std::move(function));
+        }
+        continue;
       }
-      continue;
+      case TokenKind::KwStruct: {
+        sawDeclaration_ = true;
+        auto declaration = parseStruct();
+        if (declaration) {
+          program.structs.push_back(std::move(declaration));
+        }
+        continue;
+      }
+      default: {
+        const Token& unexpected = current();
+        error(unexpected.span, std::string("expected 'fn', 'struct', or 'import', found ") +
+                                   tokenKindName(unexpected.kind));
+        advance();
+        synchronize();
+        sawDeclaration_ = true;
+        continue;
+      }
     }
-    const Token& unexpected = current();
-    diagnostics_.error(unexpected.span,
-                       std::string("expected a function declaration ('fn'), found ") +
-                           tokenKindName(unexpected.kind));
-    advance();
-    synchronize();
   }
   return program;
+}
+
+void Parser::parseImport(ast::Program& program) {
+  const Token& keyword = advance();  // 'import'
+  if (sawDeclaration_) {
+    error(keyword.span, "imports must appear before any function or struct declaration");
+    note(keyword.span, "move this import to the top of the file");
+  }
+  if (!check(TokenKind::StringLiteral)) {
+    error(current().span, std::string("expected a quoted file path after 'import', found ") +
+                              tokenKindName(current().kind));
+    synchronize();
+    return;
+  }
+  const Token& path = advance();
+  if (path.stringValue.empty()) {
+    error(path.span, "import path must not be empty");
+  }
+  expect(TokenKind::Semicolon, "after import path");
+  ast::ImportDecl declaration;
+  declaration.path = path.stringValue;
+  declaration.span = SourceSpan{keyword.span.begin, previousEnd_};
+  program.imports.push_back(std::move(declaration));
 }
 
 void Parser::synchronize() {
@@ -119,8 +167,10 @@ void Parser::synchronize() {
     if (check(TokenKind::RBrace)) {
       return;
     }
-    if (check(TokenKind::KwFn) || check(TokenKind::KwLet) || check(TokenKind::KwVar) ||
-        check(TokenKind::KwReturn) || check(TokenKind::KwIf) || check(TokenKind::KwWhile)) {
+    if (check(TokenKind::KwFn) || check(TokenKind::KwStruct) || check(TokenKind::KwImport) ||
+        check(TokenKind::KwLet) || check(TokenKind::KwVar) || check(TokenKind::KwReturn) ||
+        check(TokenKind::KwIf) || check(TokenKind::KwWhile) || check(TokenKind::KwFor) ||
+        check(TokenKind::KwBreak) || check(TokenKind::KwContinue)) {
       return;
     }
     advance();
@@ -131,10 +181,11 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
   const Token& fnToken = advance();  // 'fn'
   auto function = std::make_unique<ast::FunctionDecl>();
   function->span = fnToken.span;
+  function->file = file_;
 
   if (!check(TokenKind::Identifier)) {
-    diagnostics_.error(current().span, std::string("expected a function name, found ") +
-                                           tokenKindName(current().kind));
+    error(current().span, std::string("expected a function name, found ") +
+                              tokenKindName(current().kind));
     synchronize();
     return nullptr;
   }
@@ -143,9 +194,8 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
   function->nameSpan = nameToken.span;
 
   if (!check(TokenKind::LParen)) {
-    diagnostics_.error(current().span,
-                       std::string("expected '(' after function name '") + function->name +
-                           "', found " + tokenKindName(current().kind));
+    error(current().span, "expected '(' after function name '" + function->name + "', found " +
+                              tokenKindName(current().kind));
     synchronize();
     return nullptr;
   }
@@ -154,8 +204,8 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
   if (!check(TokenKind::RParen)) {
     for (;;) {
       if (!check(TokenKind::Identifier)) {
-        diagnostics_.error(current().span,
-                           "expected a parameter name, found " + std::string(tokenKindName(current().kind)));
+        error(current().span, "expected a parameter name, found " +
+                                  std::string(tokenKindName(current().kind)));
         synchronize();
         return nullptr;
       }
@@ -165,14 +215,14 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
       parameter.span = parameterName.span;
 
       if (!check(TokenKind::Colon)) {
-        diagnostics_.error(current().span, "expected ':' and a type after parameter name '" +
-                                               parameter.name + "'");
+        error(current().span,
+              "expected ':' and a type after parameter name '" + parameter.name + "'");
         synchronize();
         return nullptr;
       }
       advance();
       parameter.type = parseTypeAnnotation();
-      if (parameter.type.name.empty()) {
+      if (!parameter.type.isValid()) {
         synchronize();
         return nullptr;
       }
@@ -185,8 +235,8 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
     }
   }
   if (!check(TokenKind::RParen)) {
-    diagnostics_.error(current().span, "expected ')' to close the parameter list of '" +
-                                           function->name + "'");
+    error(current().span,
+          "expected ')' to close the parameter list of '" + function->name + "'");
     synchronize();
     return nullptr;
   }
@@ -194,7 +244,7 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
 
   if (match(TokenKind::Arrow)) {
     function->returnType = parseTypeAnnotation();
-    function->hasReturnType = !function->returnType.name.empty();
+    function->hasReturnType = function->returnType.isValid();
     if (!function->hasReturnType) {
       synchronize();
       return nullptr;
@@ -202,8 +252,8 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
   }
 
   if (!check(TokenKind::LBrace)) {
-    diagnostics_.error(current().span, "expected '{' to begin the body of function '" +
-                                           function->name + "'");
+    error(current().span,
+          "expected '{' to begin the body of function '" + function->name + "'");
     synchronize();
     return nullptr;
   }
@@ -211,16 +261,117 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunction() {
   return function;
 }
 
+std::unique_ptr<ast::StructDecl> Parser::parseStruct() {
+  const Token& keyword = advance();  // 'struct'
+  auto declaration = std::make_unique<ast::StructDecl>();
+  declaration->span = keyword.span;
+  declaration->file = file_;
+
+  if (!check(TokenKind::Identifier)) {
+    error(current().span, std::string("expected a struct name, found ") +
+                              tokenKindName(current().kind));
+    synchronize();
+    return nullptr;
+  }
+  const Token& name = advance();
+  declaration->name = name.text;
+  declaration->nameSpan = name.span;
+
+  if (!check(TokenKind::LBrace)) {
+    error(current().span, "expected '{' to begin the fields of struct '" + declaration->name + "'");
+    synchronize();
+    return nullptr;
+  }
+  advance();
+
+  while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile) && !depthLimitExceeded_) {
+    if (!check(TokenKind::Identifier)) {
+      error(current().span, std::string("expected a field name, found ") +
+                                tokenKindName(current().kind));
+      advance();
+      synchronize();
+      continue;
+    }
+    ast::FieldDecl field;
+    const Token& fieldName = advance();
+    field.name = fieldName.text;
+    field.nameSpan = fieldName.span;
+    if (!check(TokenKind::Colon)) {
+      error(current().span, "expected ':' and a type after field name '" + field.name + "'");
+      synchronize();
+      continue;
+    }
+    advance();
+    field.type = parseTypeAnnotation();
+    if (!field.type.isValid()) {
+      synchronize();
+      continue;
+    }
+    declaration->fields.push_back(std::move(field));
+    if (!match(TokenKind::Comma)) {
+      break;
+    }
+  }
+
+  if (check(TokenKind::RBrace)) {
+    advance();
+  } else if (!depthLimitExceeded_) {
+    error(current().span, "expected '}' to close the fields of struct '" + declaration->name + "'");
+  }
+  if (declaration->fields.empty()) {
+    error(declaration->nameSpan, "struct '" + declaration->name + "' must declare at least one field");
+  }
+  return declaration;
+}
+
 ast::TypeSyntax Parser::parseTypeAnnotation() {
   ast::TypeSyntax type;
+
+  if (check(TokenKind::LBracket)) {
+    const Token& open = advance();
+    type.kind = ast::TypeSyntax::Kind::Array;
+    type.span = open.span;
+    type.element = std::make_unique<ast::TypeSyntax>(parseTypeAnnotation());
+    if (!type.element->isValid()) {
+      return ast::TypeSyntax{};
+    }
+    if (!check(TokenKind::Semicolon)) {
+      error(current().span, std::string("expected ';' and a length in an array type, found ") +
+                                tokenKindName(current().kind));
+      return ast::TypeSyntax{};
+    }
+    advance();
+    if (!check(TokenKind::IntegerLiteral)) {
+      error(current().span, std::string("expected an array length, found ") +
+                                tokenKindName(current().kind));
+      return ast::TypeSyntax{};
+    }
+    const Token& length = advance();
+    if (length.integerValue == 0) {
+      error(length.span, "array length must be greater than zero");
+      return ast::TypeSyntax{};
+    }
+    type.arrayLength = length.integerValue;
+    type.lengthSpan = length.span;
+    if (!check(TokenKind::RBracket)) {
+      error(current().span, std::string("expected ']' to close an array type, found ") +
+                                tokenKindName(current().kind));
+      return ast::TypeSyntax{};
+    }
+    const Token& close = advance();
+    type.span = SourceSpan{open.span.begin, close.span.end};
+    return type;
+  }
+
   // Identifiers are accepted here on purpose: semantic analysis reports them as
   // unknown types, which is a more useful diagnostic than a syntax error.
   if (!isTypeKeyword(current().kind) && !check(TokenKind::Identifier)) {
-    diagnostics_.error(current().span,
-                       std::string("expected a type name, found ") + tokenKindName(current().kind));
-    return type;
+    error(current().span,
+          std::string("expected a type name, found ") + tokenKindName(current().kind));
+    return ast::TypeSyntax{};
   }
   const Token& token = advance();
+  type.kind = ast::TypeSyntax::Kind::Named;
   type.name = token.text;
   type.span = token.span;
   return type;
@@ -242,7 +393,7 @@ std::vector<std::unique_ptr<ast::Stmt>> Parser::parseBlock() {
   if (check(TokenKind::RBrace)) {
     advance();
   } else if (!depthLimitExceeded_) {
-    diagnostics_.error(current().span, "expected '}' to close the block");
+    error(current().span, "expected '}' to close the block");
   }
   return statements;
 }
@@ -262,6 +413,22 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
       return parseIfStatement();
     case TokenKind::KwWhile:
       return parseWhileStatement();
+    case TokenKind::KwFor:
+      return parseForStatement();
+    case TokenKind::KwBreak: {
+      const Token& token = advance();
+      auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Break, token.span);
+      expect(TokenKind::Semicolon, "after 'break'");
+      statement->span = spanFrom(token);
+      return statement;
+    }
+    case TokenKind::KwContinue: {
+      const Token& token = advance();
+      auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Continue, token.span);
+      expect(TokenKind::Semicolon, "after 'continue'");
+      statement->span = spanFrom(token);
+      return statement;
+    }
     case TokenKind::LBrace: {
       const Token& begin = current();
       auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Block, begin.span);
@@ -275,8 +442,17 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
       return std::make_unique<ast::Stmt>(ast::Stmt::Kind::Block, token.span);
     }
     case TokenKind::KwFn:
-      diagnostics_.error(current().span,
-                         "nested function declarations are not supported by Gable v0.1");
+      error(current().span, "nested function declarations are not supported by Gable");
+      synchronize();
+      advance();
+      return nullptr;
+    case TokenKind::KwStruct:
+      error(current().span, "struct declarations are only allowed at the top level of a file");
+      synchronize();
+      advance();
+      return nullptr;
+    case TokenKind::KwImport:
+      error(current().span, "imports must appear before any function or struct declaration");
       synchronize();
       advance();
       return nullptr;
@@ -293,17 +469,10 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
 
   if (check(TokenKind::Assign)) {
     advance();
-    if (expression->kind != ast::Expr::Kind::Name) {
-      diagnostics_.error(expression->span, "invalid assignment target; expected a variable name");
-      synchronize();
-      return nullptr;
-    }
     auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Assign, begin.span);
-    statement->name = expression->name;
-    statement->nameSpan = expression->span;
-    statement->expression = parseExpression(0);
-    statement->span = spanFrom(begin);
-    if (!statement->expression) {
+    statement->target = std::move(expression);
+    statement->value = parseExpression(0);
+    if (!statement->value) {
       synchronize();
       return nullptr;
     }
@@ -313,7 +482,7 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
   }
 
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::ExprStmt, begin.span);
-  statement->expression = std::move(expression);
+  statement->value = std::move(expression);
   expect(TokenKind::Semicolon, "after expression");
   statement->span = spanFrom(begin);
   return statement;
@@ -325,9 +494,9 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
   statement->isMutable = isMutable;
 
   if (!check(TokenKind::Identifier)) {
-    diagnostics_.error(current().span, std::string("expected a variable name after '") +
-                                           (isMutable ? "var" : "let") + "', found " +
-                                           tokenKindName(current().kind));
+    error(current().span, std::string("expected a variable name after '") +
+                              (isMutable ? "var" : "let") + "', found " +
+                              tokenKindName(current().kind));
     synchronize();
     return nullptr;
   }
@@ -337,7 +506,7 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
 
   if (match(TokenKind::Colon)) {
     statement->typeAnnotation = parseTypeAnnotation();
-    if (statement->typeAnnotation.name.empty()) {
+    if (!statement->typeAnnotation.isValid()) {
       synchronize();
       return nullptr;
     }
@@ -345,15 +514,14 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
   }
 
   if (!check(TokenKind::Assign)) {
-    diagnostics_.error(current().span,
-                       std::string("binding '") + statement->name +
-                           "' must be initialized; expected '=' and an initial value");
+    error(current().span, std::string("binding '") + statement->name +
+                              "' must be initialized; expected '=' and an initial value");
     synchronize();
     return nullptr;
   }
   advance();
-  statement->expression = parseExpression(0);
-  if (!statement->expression) {
+  statement->value = parseExpression(0);
+  if (!statement->value) {
     synchronize();
     return nullptr;
   }
@@ -366,8 +534,8 @@ std::unique_ptr<ast::Stmt> Parser::parseReturnStatement() {
   const Token& begin = advance();  // 'return'
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Return, begin.span);
   if (!check(TokenKind::Semicolon)) {
-    statement->expression = parseExpression(0);
-    if (!statement->expression) {
+    statement->value = parseExpression(0);
+    if (!statement->value) {
       synchronize();
       return nullptr;
     }
@@ -381,16 +549,15 @@ std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
   const Token& begin = advance();  // 'if'
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::If, begin.span);
 
-  statement->expression = parseExpression(0);
-  if (!statement->expression) {
+  statement->value = parseExpression(0);
+  if (!statement->value) {
     synchronize();
     return nullptr;
   }
 
   if (!check(TokenKind::LBrace)) {
-    diagnostics_.error(current().span,
-                       "expected '{' after the condition of an 'if' statement; Gable requires "
-                       "braced bodies");
+    error(current().span,
+          "expected '{' after the condition of an 'if' statement; Gable requires braced bodies");
     synchronize();
     return nullptr;
   }
@@ -407,8 +574,8 @@ std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
     } else if (check(TokenKind::LBrace)) {
       statement->elseBody = parseBlock();
     } else {
-      diagnostics_.error(current().span,
-                         "expected '{' or 'if' after 'else'; Gable requires braced bodies");
+      error(current().span,
+            "expected '{' or 'if' after 'else'; Gable requires braced bodies");
       synchronize();
       return nullptr;
     }
@@ -422,16 +589,59 @@ std::unique_ptr<ast::Stmt> Parser::parseWhileStatement() {
   const Token& begin = advance();  // 'while'
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::While, begin.span);
 
-  statement->expression = parseExpression(0);
-  if (!statement->expression) {
+  statement->value = parseExpression(0);
+  if (!statement->value) {
     synchronize();
     return nullptr;
   }
 
   if (!check(TokenKind::LBrace)) {
-    diagnostics_.error(current().span,
-                       "expected '{' after the condition of a 'while' statement; Gable requires "
-                       "braced bodies");
+    error(current().span,
+          "expected '{' after the condition of a 'while' statement; Gable requires braced bodies");
+    synchronize();
+    return nullptr;
+  }
+  statement->body = parseBlock();
+  statement->span = spanFrom(begin);
+  return statement;
+}
+
+std::unique_ptr<ast::Stmt> Parser::parseForStatement() {
+  const Token& begin = advance();  // 'for'
+  auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::For, begin.span);
+
+  if (!check(TokenKind::Identifier)) {
+    error(current().span, std::string("expected a loop variable name after 'for', found ") +
+                              tokenKindName(current().kind));
+    synchronize();
+    return nullptr;
+  }
+  const Token& variable = advance();
+  statement->loopVariable = variable.text;
+  statement->loopVariableSpan = variable.span;
+
+  if (!check(TokenKind::KwIn)) {
+    error(current().span, std::string("expected 'in' after the loop variable, found ") +
+                              tokenKindName(current().kind));
+    synchronize();
+    return nullptr;
+  }
+  advance();
+
+  statement->value = parseExpression(0);
+  if (!statement->value) {
+    synchronize();
+    return nullptr;
+  }
+  if (statement->value->kind == ast::Expr::Kind::Range) {
+    statement->isRangeLoop = true;
+    statement->rangeEnd = std::move(statement->value->rhs);
+    statement->value = std::move(statement->value->lhs);
+  }
+
+  if (!check(TokenKind::LBrace)) {
+    error(current().span,
+          "expected '{' after the header of a 'for' statement; Gable requires braced bodies");
     synchronize();
     return nullptr;
   }
@@ -490,6 +700,21 @@ ast::ExprPtr Parser::parseExpression(int minPrecedence) {
 
   for (;;) {
     const TokenKind kind = current().kind;
+    if (kind == TokenKind::DotDot && minPrecedence <= 1) {
+      // A range is only meaningful in a `for` header; it is parsed here so that
+      // the error for `0..10` elsewhere points at the range.
+      const Token& opToken = advance();
+      ast::ExprPtr right = parseExpression(2);
+      if (!right) {
+        return nullptr;
+      }
+      auto range = std::make_unique<ast::Expr>(ast::Expr::Kind::Range, opToken.span);
+      range->span = SourceSpan{left->span.begin, right->span.end};
+      range->lhs = std::move(left);
+      range->rhs = std::move(right);
+      left = std::move(range);
+      continue;
+    }
     const int precedence = precedenceOf(kind);
     if (precedence == 0 || precedence < minPrecedence) {
       break;
@@ -512,18 +737,7 @@ ast::ExprPtr Parser::parseExpression(int minPrecedence) {
 ast::ExprPtr Parser::parsePrefix() {
   const Token& token = current();
   switch (token.kind) {
-    case TokenKind::Minus: {
-      advance();
-      ast::ExprPtr operand = parseExpression(7);
-      if (!operand) {
-        return nullptr;
-      }
-      auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::Unary, token.span);
-      expr->unaryOp = UnaryOp::Negate;
-      expr->span = SourceSpan{token.span.begin, operand->span.end};
-      expr->lhs = std::move(operand);
-      return expr;
-    }
+    case TokenKind::Minus:
     case TokenKind::Bang: {
       advance();
       ast::ExprPtr operand = parseExpression(7);
@@ -531,16 +745,15 @@ ast::ExprPtr Parser::parsePrefix() {
         return nullptr;
       }
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::Unary, token.span);
-      expr->unaryOp = UnaryOp::LogicalNot;
+      expr->unaryOp = token.kind == TokenKind::Minus ? UnaryOp::Negate : UnaryOp::LogicalNot;
       expr->span = SourceSpan{token.span.begin, operand->span.end};
       expr->lhs = std::move(operand);
       return expr;
     }
     case TokenKind::Amp:
     case TokenKind::Pipe:
-      diagnostics_.error(token.span, std::string("operator '") + token.text +
-                                         "' is reserved for a future Gable release and is not "
-                                         "supported in v0.1");
+      error(token.span, std::string("operator '") + token.text +
+                            "' is reserved for a future Gable release and is not supported");
       advance();
       synchronize();
       return nullptr;
@@ -557,27 +770,27 @@ ast::ExprPtr Parser::parsePrimary() {
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::IntegerLiteral, token.span);
       expr->integerValue = token.integerValue;
       expr->unsignedLiteral = token.unsignedLiteral;
-      return expr;
+      return parsePostfix(std::move(expr));
     }
     case TokenKind::StringLiteral: {
       advance();
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::StringLiteral, token.span);
       expr->stringValue = token.stringValue;
-      return expr;
+      return parsePostfix(std::move(expr));
     }
     case TokenKind::KwTrue:
     case TokenKind::KwFalse: {
       advance();
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::BoolLiteral, token.span);
       expr->boolValue = token.kind == TokenKind::KwTrue;
-      return expr;
+      return parsePostfix(std::move(expr));
     }
     case TokenKind::Identifier: {
       advance();
       if (!check(TokenKind::LParen)) {
         auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::Name, token.span);
         expr->name = token.text;
-        return expr;
+        return parsePostfix(std::move(expr));
       }
       advance();  // '('
       auto call = std::make_unique<ast::Expr>(ast::Expr::Kind::Call, token.span);
@@ -596,13 +809,39 @@ ast::ExprPtr Parser::parsePrimary() {
         }
       }
       if (!check(TokenKind::RParen)) {
-        diagnostics_.error(current().span,
-                           "expected ')' to close the argument list of '" + token.text + "'");
+        error(current().span, "expected ')' to close the argument list of '" + token.text + "'");
         return nullptr;
       }
       const Token& close = advance();
       call->span = SourceSpan{token.span.begin, close.span.end};
-      return call;
+      return parsePostfix(std::move(call));
+    }
+    case TokenKind::LBracket: {
+      advance();
+      auto literal = std::make_unique<ast::Expr>(ast::Expr::Kind::ArrayLiteral, token.span);
+      if (!check(TokenKind::RBracket)) {
+        for (;;) {
+          ast::ExprPtr element = parseExpression(0);
+          if (!element) {
+            return nullptr;
+          }
+          literal->arguments.push_back(std::move(element));
+          if (match(TokenKind::Comma)) {
+            if (check(TokenKind::RBracket)) {
+              break;  // trailing comma
+            }
+            continue;
+          }
+          break;
+        }
+      }
+      if (!check(TokenKind::RBracket)) {
+        error(current().span, "expected ']' to close the array literal");
+        return nullptr;
+      }
+      const Token& close = advance();
+      literal->span = SourceSpan{token.span.begin, close.span.end};
+      return parsePostfix(std::move(literal));
     }
     case TokenKind::LParen: {
       advance();
@@ -611,19 +850,71 @@ ast::ExprPtr Parser::parsePrimary() {
         return nullptr;
       }
       if (!check(TokenKind::RParen)) {
-        diagnostics_.error(current().span, "expected ')' to close the parenthesized expression");
+        error(current().span, "expected ')' to close the parenthesized expression");
         return nullptr;
       }
       advance();
-      return inner;
+      return parsePostfix(std::move(inner));
     }
     case TokenKind::EndOfFile:
-      diagnostics_.error(token.span, "expected an expression, found end of file");
+      error(token.span, "expected an expression, found end of file");
       return nullptr;
     default:
-      diagnostics_.error(token.span,
-                         std::string("expected an expression, found ") + tokenKindName(token.kind));
+      error(token.span,
+            std::string("expected an expression, found ") + tokenKindName(token.kind));
       return nullptr;
+  }
+}
+
+ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
+  for (;;) {
+    if (check(TokenKind::Dot)) {
+      advance();
+      if (!check(TokenKind::Identifier)) {
+        error(current().span, std::string("expected a field name after '.', found ") +
+                                  tokenKindName(current().kind));
+        return nullptr;
+      }
+      const Token& field = advance();
+      auto access = std::make_unique<ast::Expr>(ast::Expr::Kind::FieldAccess, field.span);
+      access->span = SourceSpan{base->span.begin, field.span.end};
+      access->fieldName = field.text;
+      access->fieldSpan = field.span;
+      access->lhs = std::move(base);
+      base = std::move(access);
+      continue;
+    }
+    if (check(TokenKind::LBracket)) {
+      const Token& open = advance();
+      ast::ExprPtr index = parseExpression(0);
+      if (!index) {
+        return nullptr;
+      }
+      if (!check(TokenKind::RBracket)) {
+        error(current().span, "expected ']' after the index expression");
+        return nullptr;
+      }
+      const Token& close = advance();
+      auto access = std::make_unique<ast::Expr>(ast::Expr::Kind::Index, open.span);
+      access->span = SourceSpan{base->span.begin, close.span.end};
+      access->lhs = std::move(base);
+      access->rhs = std::move(index);
+      base = std::move(access);
+      continue;
+    }
+    if (check(TokenKind::KwAs)) {
+      const Token& keyword = advance();
+      auto cast = std::make_unique<ast::Expr>(ast::Expr::Kind::Cast, keyword.span);
+      cast->targetType = parseTypeAnnotation();
+      if (!cast->targetType.isValid()) {
+        return nullptr;
+      }
+      cast->span = SourceSpan{base->span.begin, cast->targetType.span.end};
+      cast->lhs = std::move(base);
+      base = std::move(cast);
+      continue;
+    }
+    return base;
   }
 }
 

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "gable/compiler.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 #include "gable/toolchain.h"
@@ -17,7 +18,7 @@ namespace {
 namespace fs = std::filesystem;
 
 struct ParsedCommand {
-  enum class Action { Build, Run, Help, Version };
+  enum class Action { Build, Run, Check, Help, Version };
 
   Action action = Action::Help;
   std::string sourcePath;
@@ -85,8 +86,11 @@ CliExitCode executeRun(const ParsedCommand& parsed, std::ostream& out, std::ostr
     return static_cast<CliExitCode>(exitCodeFor(build.status));
   }
 
+  std::vector<std::string> command = {build.executablePath};
+  command.insert(command.end(), parsed.programArguments.begin(), parsed.programArguments.end());
+
   std::string processError;
-  const int exitCode = runProcessInheriting({build.executablePath}, processError);
+  const int exitCode = runProcessInheriting(command, processError);
   if (!processError.empty()) {
     err << "gable: error: " << processError << '\n';
   }
@@ -94,6 +98,23 @@ CliExitCode executeRun(const ParsedCommand& parsed, std::ostream& out, std::ostr
     return CliExitCode::InternalFailure;
   }
   return static_cast<CliExitCode>(exitCode);
+}
+
+/// Analyses `parsed.sourcePath` without producing any output file.
+CliExitCode executeCheck(const ParsedCommand& parsed, std::ostream& err) {
+  FrontendResult frontend = analyzeSourceFile(parsed.sourcePath);
+  if (frontend.hasErrors()) {
+    frontend.renderDiagnostics(err);
+    if (!frontend.hasInputError) {
+      err << "gable: " << frontend.diagnostics.errorCount() << " error(s) in "
+          << parsed.sourcePath << '\n';
+    }
+    return CliExitCode::CompilationFailed;
+  }
+  if (parsed.verbose) {
+    err << "gable: " << parsed.sourcePath << " is valid\n";
+  }
+  return CliExitCode::Success;
 }
 
 CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::ostream& err) {
@@ -147,6 +168,8 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
     parsed.action = ParsedCommand::Action::Build;
   } else if (command == "run") {
     parsed.action = ParsedCommand::Action::Run;
+  } else if (command == "check") {
+    parsed.action = ParsedCommand::Action::Check;
   } else if (!command.empty() && command[0] == '-') {
     err << "gable: error: unknown option '" << command << "'\n";
     return false;
@@ -229,9 +252,16 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
     err << "gable: error: --emit-c cannot be combined with 'run'\n";
     return false;
   }
-  if (parsed.action == ParsedCommand::Action::Run && !parsed.programArguments.empty()) {
-    err << "gable: error: Gable programs cannot read command-line arguments in v0.1; "
-           "'run' does not forward the values after '--'\n";
+  if (parsed.action != ParsedCommand::Action::Run && !parsed.programArguments.empty()) {
+    err << "gable: error: only 'run' forwards arguments after '--'\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Check && parsed.emitC) {
+    err << "gable: error: --emit-c produces output; use 'build' for that\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Check && !parsed.outputPath.empty()) {
+    err << "gable: error: 'check' writes no output; remove -o\n";
     return false;
   }
   if (parsed.action == ParsedCommand::Action::Run && !parsed.outputPath.empty()) {
@@ -253,11 +283,14 @@ void printUsage(std::ostream& out) {
       << "Usage:\n"
       << "  gable --help | --version\n"
       << "  gable build <file.gable> [options]\n"
-      << "  gable run <file.gable> [options]\n"
+      << "  gable run <file.gable> [options] [-- program arguments]\n"
+      << "  gable check <file.gable>\n"
       << "\n"
       << "Commands:\n"
       << "  build    Compile a Gable source file to a native executable.\n"
       << "  run      Compile a Gable source file and execute it, forwarding its exit status.\n"
+      << "           Program arguments follow '--'.\n"
+      << "  check    Type check a Gable source file without writing any output.\n"
       << "\n"
       << "Options:\n"
       << "  -o <path>          Output path for 'build' (default: source name without extension).\n"
@@ -295,6 +328,8 @@ CliExitCode runCommandLine(const std::vector<std::string>& arguments, std::ostre
     case ParsedCommand::Action::Version:
       printVersion(out);
       return CliExitCode::Success;
+    case ParsedCommand::Action::Check:
+      return executeCheck(parsed, err);
     case ParsedCommand::Action::Build:
       return executeBuild(parsed, out, err);
     case ParsedCommand::Action::Run:

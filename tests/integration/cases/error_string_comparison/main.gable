@@ -1,5 +1,0 @@
-fn main() -> i32 {
-    let same: bool = "a" == "b";
-    print(same);
-    return 0;
-}

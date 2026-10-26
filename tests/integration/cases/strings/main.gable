@@ -1,9 +1,29 @@
 fn main() -> i32 {
-    print("tab:\there");
-    print("line1\nline2");
-    print("quote:\"quoted\"");
-    print("backslash:\\");
-    print("\u{41}\u00e9\u{1F600}");
-    print("");
+    let greeting: str = "hello";
+    let name: str = "gable";
+    let message: str = greeting + ", " + name;
+    print(message);
+    print(message.len);
+    print(message == "hello, gable");
+    print(message != greeting);
+    print(str_trim("  padded  "));
+    print(str_of_i64(-42));
+    print(str_of_bool(true));
+
+    let parsed = parse_i64("1234");
+    if parsed.ok { print(parsed.value); } else { print("bad"); }
+    let bad = parse_i64("12x");
+    print(bad.ok);
+
+    let found = str_find(message, "gable");
+    if found.ok { print(found.index); } else { print(-1); }
+
+    let missing = str_find(message, "zzz");
+    print(missing.ok);
+
+    let slice = str_slice(message, 7, 5);
+    if slice.ok { print(slice.text); } else { print("bad slice"); }
+    let out_of_range = str_slice(message, 20, 1);
+    print(out_of_range.ok);
     return 0;
 }

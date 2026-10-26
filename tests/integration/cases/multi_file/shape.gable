@@ -1,0 +1,8 @@
+struct Shape {
+    width: i32,
+    height: i32,
+}
+
+fn area(shape: Shape) -> i32 {
+    return shape.width * shape.height;
+}
