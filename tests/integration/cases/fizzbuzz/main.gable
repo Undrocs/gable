@@ -1,0 +1,21 @@
+fn label(n: i32) -> str {
+    if n % 15 == 0 {
+        return "FizzBuzz";
+    }
+    if n % 3 == 0 {
+        return "Fizz";
+    }
+    if n % 5 == 0 {
+        return "Buzz";
+    }
+    return "number";
+}
+
+fn main() -> i32 {
+    var i: i32 = 1;
+    while i <= 15 {
+        print(label(i));
+        i = i + 1;
+    }
+    return 0;
+}

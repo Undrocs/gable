@@ -1,0 +1,22 @@
+// Prints the first 15 Fibonacci numbers using wrapping i64 arithmetic.
+fn fib(n: i32) -> i64 {
+    var a: i64 = 0;
+    var b: i64 = 1;
+    var i: i32 = 0;
+    while i < n {
+        let next: i64 = a + b;
+        a = b;
+        b = next;
+        i = i + 1;
+    }
+    return a;
+}
+
+fn main() -> i32 {
+    var i: i32 = 0;
+    while i < 15 {
+        print(fib(i));
+        i = i + 1;
+    }
+    return 0;
+}

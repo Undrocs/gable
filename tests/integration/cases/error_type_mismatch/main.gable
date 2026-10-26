@@ -1,0 +1,4 @@
+fn main() -> i32 {
+    let a: i32 = true;
+    return 0;
+}

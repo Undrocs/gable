@@ -1,0 +1,17 @@
+fn gcd(a0: i64, b0: i64) -> i64 {
+    var a: i64 = a0;
+    var b: i64 = b0;
+    while b != 0 {
+        let t: i64 = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+fn main() -> i32 {
+    print(gcd(1071, 462));
+    print(gcd(17, 5));
+    print(gcd(48, 18));
+    return 0;
+}

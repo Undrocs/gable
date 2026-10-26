@@ -1,0 +1,16 @@
+fn main() -> i32 {
+    let a: u64 = 18446744073709551615;
+    print(a);
+    let b: i64 = -9223372036854775808;
+    print(b);
+    print(b / -1);
+    print(b % -1);
+    let c: u32 = 4294967295;
+    print(c);
+    print(c / 2);
+    print(7 < 8);
+    print(7 == 7);
+    print(7 != 7);
+    print(true == true);
+    return 0;
+}

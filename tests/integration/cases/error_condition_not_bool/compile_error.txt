@@ -1,0 +1,2 @@
+must have type 'bool'
+compare explicitly

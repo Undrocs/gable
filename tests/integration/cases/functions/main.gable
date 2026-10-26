@@ -1,0 +1,37 @@
+fn factorial(n: i64) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn is_even(n: i32) -> bool {
+    if n == 0 {
+        return true;
+    }
+    return is_odd(n - 1);
+}
+
+fn is_odd(n: i32) -> bool {
+    if n == 0 {
+        return false;
+    }
+    return is_even(n - 1);
+}
+
+fn swap_sum(a: i32, b: i32) -> i32 {
+    return b * 10 + a;
+}
+
+fn nothing() -> void {
+    print("side effect");
+}
+
+fn main() -> i32 {
+    print(factorial(10));
+    print(is_even(10));
+    print(is_odd(7));
+    print(swap_sum(1, 2));
+    nothing();
+    return 0;
+}

@@ -1,0 +1,14 @@
+fn noisy(value: bool) -> bool {
+    print("evaluated");
+    return value;
+}
+
+fn main() -> i32 {
+    let a: bool = false && noisy(true);
+    let b: bool = true || noisy(true);
+    let c: bool = true && noisy(false);
+    print(a);
+    print(b);
+    print(c);
+    return 0;
+}

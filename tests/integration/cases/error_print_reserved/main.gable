@@ -1,0 +1,7 @@
+fn print(value: i32) -> void {
+    return;
+}
+
+fn main() -> i32 {
+    return 0;
+}
