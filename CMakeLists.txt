@@ -87,7 +87,8 @@ add_library(gable_compiler STATIC
   compiler/src/types/operators.cpp
   compiler/src/codegen/c_backend.cpp
   compiler/src/driver/frontend.cpp
-  compiler/src/driver/paths.cpp
+  compiler/src/platform/posix.cpp
+  compiler/src/driver/output.cpp
   compiler/src/driver/process.cpp
   compiler/src/driver/temporary.cpp
   compiler/src/driver/toolchain.cpp

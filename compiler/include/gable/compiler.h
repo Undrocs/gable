@@ -9,6 +9,7 @@
 #include <iosfwd>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "gable/diagnostics.h"
 #include "gable/ir.h"
@@ -21,6 +22,11 @@ struct FrontendResult {
   std::unique_ptr<SourceFile> source;
   std::unique_ptr<DiagnosticEngine> diagnostics;
   std::unique_ptr<ir::Module> module;
+
+  /// Paths of every file that was read for this compilation (the main source
+  /// plus its imports), in load order. The driver uses this to refuse to write
+  /// an output over an input.
+  std::vector<std::string> inputPaths;
 
   /// Set when the file could not be read at all.
   bool hasInputError = false;

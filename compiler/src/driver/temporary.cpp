@@ -7,21 +7,12 @@
 #include <utility>
 #include <vector>
 
+#include "gable/platform.h"
+
 namespace gable {
-namespace {
-
-std::string temporaryRoot() {
-  const char* tmpdir = std::getenv("TMPDIR");
-  if (tmpdir != nullptr && tmpdir[0] != '\0') {
-    return tmpdir;
-  }
-  return "/tmp";
-}
-
-}  // namespace
 
 std::optional<TemporaryDirectory> TemporaryDirectory::create(std::string& error) {
-  std::string root = temporaryRoot();
+  std::string root = platform::temporaryDirectoryRoot();
   if (!root.empty() && root.back() == '/') {
     root.pop_back();
   }

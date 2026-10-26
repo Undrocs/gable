@@ -36,6 +36,8 @@ int exitCodeFor(ToolchainStatus status) {
       return static_cast<int>(CliExitCode::Success);
     case ToolchainStatus::CompilationFailed:
       return static_cast<int>(CliExitCode::CompilationFailed);
+    case ToolchainStatus::InvalidOutput:
+      return static_cast<int>(CliExitCode::UsageError);
     case ToolchainStatus::InternalFailure:
       return static_cast<int>(CliExitCode::InternalFailure);
   }
@@ -105,27 +107,15 @@ CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::os
       const BuildOutput result = emitCTranslationUnit(parsed.sourcePath, options, out, err);
       return static_cast<CliExitCode>(exitCodeFor(result.status));
     }
-    std::ofstream file(parsed.emitCPath, std::ios::binary | std::ios::trunc);
-    if (!file) {
-      err << "gable: error: cannot open '" << parsed.emitCPath << "' for writing\n";
-      return CliExitCode::UsageError;
-    }
-    const BuildOutput result = emitCTranslationUnit(parsed.sourcePath, options, file, err);
-    if (!file) {
-      err << "gable: error: failed while writing '" << parsed.emitCPath << "'\n";
-      return CliExitCode::InternalFailure;
-    }
+    // The destination is validated by the toolchain only after the source has
+    // been analysed, so a bad -o/--emit-c path can never truncate a source file.
+    const BuildOutput result =
+        emitCTranslationUnitToFile(parsed.sourcePath, options, parsed.emitCPath, err);
     return static_cast<CliExitCode>(exitCodeFor(result.status));
   }
 
   options.outputPath = parsed.outputPath.empty() ? defaultOutputPath(parsed.sourcePath)
                                                  : parsed.outputPath;
-  if (fs::path(options.outputPath) == fs::path(parsed.sourcePath)) {
-    err << "gable: error: refusing to overwrite the source file '" << parsed.sourcePath
-        << "'; pass -o with a different path\n";
-    return CliExitCode::UsageError;
-  }
-
   const BuildOutput result = buildExecutable(parsed.sourcePath, options, err);
   if (!isSuccess(result.status)) {
     return static_cast<CliExitCode>(exitCodeFor(result.status));

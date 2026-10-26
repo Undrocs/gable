@@ -29,6 +29,7 @@ void FrontendResult::renderDiagnostics(std::ostream& out) const {
 
 FrontendResult analyzeSourceText(std::string path, std::string text) {
   FrontendResult result;
+  result.inputPaths.push_back(path);
   result.source = std::make_unique<SourceFile>(std::move(path), std::move(text));
   result.diagnostics = std::make_unique<DiagnosticEngine>(*result.source);
 

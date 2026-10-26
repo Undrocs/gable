@@ -4,13 +4,15 @@
 #include <filesystem>
 #include <fstream>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
 
 #include "gable/c_backend.h"
 #include "gable/compiler.h"
-#include "gable/paths.h"
+#include "gable/output.h"
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 #include "gable/version.h"
@@ -44,7 +46,7 @@ struct ExecutableRelativePaths {
 
 ExecutableRelativePaths executableRelativeRuntime() {
   ExecutableRelativePaths paths;
-  const std::string executable = executablePath();
+  const std::string executable = platform::executablePath();
   if (executable.empty()) {
     return paths;
   }
@@ -192,12 +194,31 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
     return output;
   }
 
+  // Never write over a file that this compilation read.
+  const std::string alias = findInputAlias(options.outputPath, frontend.inputPaths);
+  if (!alias.empty()) {
+    diagnostics << "gable: error: refusing to write '" << options.outputPath
+                << "' because it is an input file of this compilation ('" << alias << "')\n";
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = "output path aliases an input file";
+    return output;
+  }
+
   RuntimePaths runtime;
   std::string runtimeError;
   if (!resolveRuntimePaths(options, runtime, runtimeError)) {
     diagnostics << "gable: error: " << runtimeError << '\n';
     output.status = ToolchainStatus::InternalFailure;
     output.message = runtimeError;
+    return output;
+  }
+
+  std::string atomicError;
+  auto target = AtomicOutputFile::create(options.outputPath, atomicError);
+  if (!target) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = atomicError;
     return output;
   }
 
@@ -240,7 +261,7 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
       cPath,
       runtime.libraryPath,
       "-o",
-      options.outputPath,
+      target->temporaryPath(),
   };
 
   if (options.verbose) {
@@ -279,6 +300,13 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
     return output;
   }
 
+  if (!target->commit(atomicError)) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = atomicError;
+    return output;
+  }
+
   if (options.keepTemporaryFiles) {
     temporary->keep();
     diagnostics << "gable: generated C retained at " << cPath << '\n';
@@ -286,6 +314,58 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
 
   output.status = ToolchainStatus::Success;
   output.executablePath = options.outputPath;
+  return output;
+}
+
+BuildOutput emitCTranslationUnitToFile(const std::string& sourcePath, const BuildOptions& options,
+                                       const std::string& targetPath, std::ostream& diagnostics) {
+  BuildOutput output;
+  (void)options;
+
+  FrontendResult frontend;
+  output.status = runFrontend(sourcePath, diagnostics, frontend, output.message);
+  if (output.status != ToolchainStatus::Success) {
+    return output;
+  }
+
+  // Check the destination before a single byte is written: --emit-c must not be
+  // able to truncate the file it is compiling.
+  const std::string alias = findInputAlias(targetPath, frontend.inputPaths);
+  if (!alias.empty()) {
+    diagnostics << "gable: error: refusing to write '" << targetPath
+                << "' because it is an input file of this compilation ('" << alias << "')\n";
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = "output path aliases an input file";
+    return output;
+  }
+
+  std::ostringstream generated;
+  const CBackendOptions backendOptions{sourcePath, versionString()};
+  generated << emitC(*frontend.module, backendOptions);
+
+  std::string atomicError;
+  auto target = AtomicOutputFile::create(targetPath, atomicError);
+  if (!target) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = atomicError;
+    return output;
+  }
+  if (!target->write(generated.str(), atomicError)) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InternalFailure;
+    output.message = atomicError;
+    return output;
+  }
+  if (!target->commit(atomicError)) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InternalFailure;
+    output.message = atomicError;
+    return output;
+  }
+
+  output.status = ToolchainStatus::Success;
+  output.executablePath = targetPath;
   return output;
 }
 

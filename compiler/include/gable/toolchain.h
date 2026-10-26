@@ -12,6 +12,9 @@ namespace gable {
 enum class ToolchainStatus {
   Success = 0,
   CompilationFailed = 1,
+  /// The requested output path is unusable: it aliases an input file, names a
+  /// directory, or its directory does not exist.
+  InvalidOutput = 2,
   InternalFailure = 70,
 };
 
@@ -41,6 +44,11 @@ struct BuildOutput {
 
 /// Compiles `sourcePath` into a native executable at `options.outputPath`.
 ///
+/// The executable is produced in a temporary file next to the destination and
+/// moved into place only after the C compiler succeeds, so a failed build never
+/// truncates or removes an existing executable. The destination is rejected when
+/// it refers to the source file or to any imported file.
+///
 /// Frontend diagnostics are written to `diagnostics`. On an internal failure
 /// (the C toolchain is missing, or generated C does not compile) intermediate
 /// files are retained and their location is reported, because such a failure is
@@ -52,6 +60,11 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
 /// Used by `gable build --emit-c` for inspection and by the test suite.
 BuildOutput emitCTranslationUnit(const std::string& sourcePath, const BuildOptions& options,
                                  std::ostream& out, std::ostream& diagnostics);
+
+/// Runs the frontend and writes the generated C17 translation unit to
+/// `targetPath`, atomically, after refusing any path that aliases an input file.
+BuildOutput emitCTranslationUnitToFile(const std::string& sourcePath, const BuildOptions& options,
+                                       const std::string& targetPath, std::ostream& diagnostics);
 
 /// Resolves the C compiler that will be used: explicit option, $GABLE_CC, "cc".
 std::string resolveCCompiler(const BuildOptions& options);

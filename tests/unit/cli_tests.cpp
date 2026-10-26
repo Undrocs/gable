@@ -1,6 +1,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -153,7 +154,112 @@ GABLE_TEST(cli_refuses_to_overwrite_source) {
   const std::string source = writeSource(directory, "same.gable", gabletest::kSimpleProgram());
   const Run run = runCli({"build", source, "-o", source});
   GABLE_CHECK_EQ(2, run.exitCode);
-  GABLE_CHECK(run.err.find("refusing to overwrite the source file") != std::string::npos);
+  GABLE_CHECK(run.err.find("refusing to write") != std::string::npos);
+  // The source must be byte-for-byte unchanged.
+  std::ifstream file(source);
+  std::stringstream contents;
+  contents << file.rdbuf();
+  GABLE_CHECK_EQ(std::string(gabletest::kSimpleProgram()), contents.str());
+}
+
+GABLE_TEST(cli_refuses_emit_c_onto_the_source) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "emit.gable", gabletest::kSimpleProgram());
+  const Run run = runCli({"build", source, "--emit-c=" + source});
+  GABLE_CHECK_EQ(2, run.exitCode);
+  GABLE_CHECK(run.err.find("refusing to write") != std::string::npos);
+
+  std::ifstream file(source);
+  std::stringstream contents;
+  contents << file.rdbuf();
+  GABLE_CHECK_EQ(std::string(gabletest::kSimpleProgram()), contents.str());
+}
+
+GABLE_TEST(cli_refuses_output_through_a_symlink_to_the_source) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "target.gable", gabletest::kSimpleProgram());
+  const std::string link = directory.file("alias.gable");
+  std::error_code ignored;
+  std::filesystem::create_symlink(source, link, ignored);
+  if (ignored) {
+    return;  // filesystem does not support symlinks; behaviour is covered elsewhere
+  }
+
+  const Run emit = runCli({"build", source, "--emit-c=" + link});
+  GABLE_CHECK_EQ(2, emit.exitCode);
+  GABLE_CHECK(emit.err.find("refusing to write") != std::string::npos);
+
+  std::ifstream file(source);
+  std::stringstream contents;
+  contents << file.rdbuf();
+  GABLE_CHECK_EQ(std::string(gabletest::kSimpleProgram()), contents.str());
+}
+
+GABLE_TEST(cli_accepts_output_paths_with_spaces) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "spaces.gable", gabletest::kSimpleProgram());
+  const std::string nested = directory.file("dir with spaces");
+  std::error_code ignored;
+  std::filesystem::create_directory(nested, ignored);
+  const std::string output = nested + "/pro gram";
+  const Run run = runCli({"build", source, "-o", output});
+  GABLE_CHECK_EQ(0, run.exitCode);
+  GABLE_CHECK(std::ifstream(output).good());
+}
+
+GABLE_TEST(cli_reports_missing_output_directory) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "ok.gable", gabletest::kSimpleProgram());
+  const Run run = runCli({"build", source, "-o", directory.file("missing/out")});
+  GABLE_CHECK_EQ(2, run.exitCode);
+  GABLE_CHECK(run.err.find("does not exist") != std::string::npos);
+}
+
+GABLE_TEST(cli_rejects_directory_as_output) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "ok.gable", gabletest::kSimpleProgram());
+  std::error_code ignored;
+  std::filesystem::create_directory(directory.file("outdir"), ignored);
+  const Run run = runCli({"build", source, "-o", directory.file("outdir")});
+  GABLE_CHECK_EQ(2, run.exitCode);
+  GABLE_CHECK(run.err.find("is a directory") != std::string::npos);
+}
+
+GABLE_TEST(cli_keeps_existing_executable_when_build_fails) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "flaky.gable", gabletest::kSimpleProgram());
+  const std::string output = directory.file("existing");
+  GABLE_CHECK_EQ(0, runCli({"build", source, "-o", output}).exitCode);
+
+  std::ifstream before(output, std::ios::binary);
+  std::stringstream original;
+  original << before.rdbuf();
+  before.close();
+  GABLE_CHECK(!original.str().empty());
+
+  writeSource(directory, "flaky.gable", "fn main() -> i32 { return missing; }\n");
+  const Run failed = runCli({"build", source, "-o", output});
+  GABLE_CHECK_EQ(1, failed.exitCode);
+
+  std::ifstream after(output, std::ios::binary);
+  std::stringstream preserved;
+  preserved << after.rdbuf();
+  GABLE_CHECK_EQ(original.str(), preserved.str());
+}
+
+GABLE_TEST(cli_leaves_no_temporary_files_behind) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "clean.gable", gabletest::kSimpleProgram());
+  GABLE_CHECK_EQ(0, runCli({"build", source, "-o", directory.file("clean")}).exitCode);
+  GABLE_CHECK_EQ(0, runCli({"build", source, "--emit-c=" + directory.file("clean.c")}).exitCode);
+
+  std::size_t entries = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(directory.path())) {
+    (void)entry;
+    ++entries;
+  }
+  // source, executable, generated C
+  GABLE_CHECK_EQ(std::size_t(3), entries);
 }
 
 GABLE_TEST(cli_default_output_path_drops_gable_extension) {
