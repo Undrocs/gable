@@ -1,5 +1,7 @@
 #include "gable/toolchain.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -127,6 +129,58 @@ bool resolveRuntimePaths(const BuildOptions& options, RuntimePaths& paths, std::
   return true;
 }
 
+/// How the C compiler on this host spells its options. MSVC and clang-cl use
+/// slash options and a different output syntax; GCC and Clang on POSIX accept
+/// the traditional dash options.
+enum class CCompilerFamily { GnuStyle, MsvcStyle };
+
+CCompilerFamily familyOf(const std::string& compiler) {
+  std::string name = fs::path(compiler).filename().string();
+  std::transform(name.begin(), name.end(), name.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (name == "cl" || name == "cl.exe" || name == "clang-cl" || name == "clang-cl.exe") {
+    return CCompilerFamily::MsvcStyle;
+  }
+  return CCompilerFamily::GnuStyle;
+}
+
+std::vector<std::string> compilerArguments(CCompilerFamily family, const std::string& compiler,
+                                          const std::string& cPath, const std::string& outputPath,
+                                          const std::string& includeDir,
+                                          const std::string& libraryPath, int optimizationLevel) {
+  if (family == CCompilerFamily::MsvcStyle) {
+    const std::string level = optimizationLevel >= 2 ? "/O2"
+                              : optimizationLevel == 1 ? "/O1"
+                                                       : "/Od";
+    return {
+        compiler,
+        "/nologo",
+        "/std:c17",
+        level,
+        "/W4",
+        "/I" + includeDir,
+        // Keep the object file next to the generated C, inside the temporary
+        // directory, instead of in the current working directory.
+        "/Fo" + cPath + ".obj",
+        cPath,
+        libraryPath,
+        "/Fe" + outputPath,
+    };
+  }
+  return {
+      compiler,
+      "-std=c17",
+      "-O" + std::to_string(optimizationLevel),
+      "-Wall",
+      "-Wextra",
+      "-I" + includeDir,
+      cPath,
+      libraryPath,
+      "-o",
+      outputPath,
+  };
+}
+
 /// Runs the frontend, writing diagnostics on failure.
 ToolchainStatus runFrontend(const std::string& sourcePath, std::ostream& diagnostics,
                             FrontendResult& result, std::string& failureMessage) {
@@ -151,7 +205,7 @@ std::string resolveCCompiler(const BuildOptions& options) {
   if (!options.cCompiler.empty()) {
     return options.cCompiler;
   }
-  return environmentOr("GABLE_CC", "cc");
+  return environmentOr("GABLE_CC", platform::defaultCCompiler());
 }
 
 BuildOutput emitCTranslationUnit(const std::string& sourcePath, const BuildOptions& options,
@@ -251,18 +305,9 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
   }
 
   const std::string cCompiler = resolveCCompiler(options);
-  std::vector<std::string> argv = {
-      cCompiler,
-      "-std=c17",
-      "-O" + std::to_string(options.optimizationLevel),
-      "-Wall",
-      "-Wextra",
-      "-I" + runtime.includeDir,
-      cPath,
-      runtime.libraryPath,
-      "-o",
-      target->temporaryPath(),
-  };
+  const std::vector<std::string> argv =
+      compilerArguments(familyOf(cCompiler), cCompiler, cPath, target->temporaryPath(),
+                        runtime.includeDir, runtime.libraryPath, options.optimizationLevel);
 
   if (options.verbose) {
     diagnostics << "gable: running:";

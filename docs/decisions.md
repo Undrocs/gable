@@ -153,6 +153,9 @@ then become a normal function in `stdlib`.
 
 ## 0008 — `str` is immutable, NUL-terminated UTF-8 with no operations
 
+> **Superseded by ADR 0017.** v0.2 made `str` an explicit-length value with
+> comparison, concatenation, and library operations.
+
 **Decision.** `str` values are immutable NUL-terminated byte sequences holding
 UTF-8. v0.1 supports printing only. Escapes that would produce a NUL byte are
 rejected at compile time.
@@ -231,3 +234,157 @@ metacharacters; shell interpolation is a command-injection hazard.
 
 **Consequence.** The driver is POSIX-only for now, and Windows configuration fails
 with an explicit explanation instead of a broken build.
+
+---
+
+## 0014 — Evaluation order is specified, not inherited from C
+
+**Decision.** Gable defines left-to-right evaluation of operands and call
+arguments. The C backend enforces it: any subexpression with an observable effect
+(call, allocation, trap, index check, aggregate construction) is stored in a
+temporary before the next operand is evaluated. `&&` and `||` keep short-circuit
+semantics, and the right operand is emitted inside an `if` when it has effects.
+
+**Why.** C leaves the order of function arguments and most binary operands
+unspecified, so a Gable program with two side-effecting calls could behave
+differently on different hosts or optimization levels. Relying on the host compiler
+to keep a chosen order is not a guarantee.
+
+**Cost.** Generated C contains more temporaries than a hand-written translation
+would. Temporaries are pure reads, so the C compiler still optimizes them away.
+
+**Alternatives rejected.** (a) Documenting "unspecified, like C" — unacceptable for
+a language that claims defined semantics. (b) Emitting statement expressions or
+comma operators around every operand — the comma operator makes the code harder to
+read and still needs sequencing statements for traps.
+
+**Revisit when.** A backend emits LLVM IR: sequencing then becomes explicit in the
+IR, and the temporaries disappear.
+
+---
+
+## 0015 — One program-wide namespace built from an explicit import graph
+
+**Decision.** `import "path";` resolves relative to the importing file, each file
+is parsed once, cycles are errors, and every declaration of every file shares one
+namespace. Imports must precede other declarations.
+
+**Why.** Multi-file programs need name resolution that is explained in one
+paragraph and testable without infrastructure. A package manager, module names,
+visibility rules, or per-file namespaces would each add concepts that v0.2 cannot
+justify.
+
+**Consequences.** Duplicate names are reported with both locations, independent of
+file. Load order is deterministic: dependencies are analysed before the files that
+import them. Two files cannot declare different things with the same name, so
+splitting a program into files never changes its meaning.
+
+**Alternatives rejected.** (a) Include-style textual insertion: loses source
+locations and encourages re-parsing. (b) Per-file namespaces with `use`: needs
+qualified names, aliasing, and a rule for ambiguity; that is a module system, not a
+minimal import model.
+
+---
+
+## 0016 — Structs and arrays are values; arrays have a static length
+
+**Decision.** Structs and fixed-size arrays are copied on assignment, argument
+passing, and return. Array length is part of the type. There are no references,
+pointers, or dynamic arrays.
+
+**Why.** Value semantics remove aliasing questions (including "does iterating
+observe a mutation?") from the language. Static lengths make layout and bounds
+checking trivial and keep the C backend honest, since the generated type is a
+wrapper struct around a C array.
+
+**Consequences.** The notes tool in `tools/notes` streams over file contents
+instead of holding a growable list. A struct cannot contain itself by value.
+
+**Alternatives rejected.** (a) Reference types with ownership rules: a large design
+(the v0.3 memory work). (b) A built-in growable array: needs heap management and a
+safety story that v0.2 does not have.
+
+**Revisit when.** The memory model is designed; dynamic sequences belong there.
+
+---
+
+## 0017 — `str` is an immutable UTF-8 value with an explicit length (supersedes 0008)
+
+**Decision.** A `str` is a pointer and a byte length. Literals are valid UTF-8,
+NUL is rejected, `==` compares bytes, `+` allocates a concatenation, `.len` counts
+bytes, and there is no indexing. Strings created at run time are never freed.
+
+**Why.** Explicit lengths allow embedded text without a terminator and make the
+cost of `==` and `.len` obvious. Concatenation without reclamation is a deliberate
+v0.2 compromise: it is correct, simple, and documented, and the language is not
+yet intended for long-running processes.
+
+**Consequences.** Byte-oriented operations can split a UTF-8 character; the
+specification says so rather than pretending otherwise. Programs that build strings
+in loops grow their memory use.
+
+**Alternatives rejected.** (a) NUL-terminated strings: cannot represent all byte
+sequences and makes `len` O(n). (b) Reference counting now: ownership and cycle
+questions belong with the memory model, not with the string type.
+
+---
+
+## 0018 — Recoverable failures return result structs instead of trapping
+
+**Decision.** File input and output and number parsing return structs with an
+`ok` field and an `error` or partial-value field. Only conditions the language
+cannot express — division by zero, out-of-bounds indexing — trap.
+
+**Why.** A compiler-inserted trap is not something a Gable program can react to;
+a missing file is an expected situation for a command-line tool. Making the result
+a struct keeps error handling in the language with no exceptions, no sum types, and
+no new syntax.
+
+**Cost.** Callers must inspect `.ok`; ignoring it silently keeps the default
+values (`false`, empty text, zero).
+
+**Alternatives rejected.** (a) Exceptions: unwinding across a C runtime boundary
+and through a C backend is not worth it. (b) Panicking on I/O errors: unusable for
+tools. (c) `Option`/`Result` generics: generics are deferred.
+
+---
+
+## 0019 — Outputs are written to a temporary file and moved into place
+
+**Decision.** No output path is ever written directly. `gable build` and
+`--emit-c=<path>` create a temporary file in the destination directory, write it,
+and replace the destination in one step (`MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`
+on Windows, `rename` elsewhere). Before writing anything, the destination is
+compared with every input file of the compilation, including through symlinks and
+hard links.
+
+**Why.** An interrupted or failing build must not destroy a working executable,
+and a mistyped `-o` must not truncate the program being compiled. Both were
+possible in v0.1.
+
+**Consequences.** A failed build leaves the previous file untouched; a rejected
+destination exits with status 2 and a message naming the input it aliases; no
+temporary files are left behind on success or failure.
+
+---
+
+## 0020 — A native Windows implementation, not a POSIX compatibility layer
+
+**Decision.** Windows support is implemented directly: a `platform/windows.cpp`
+behind the platform seam (wide-character paths, `%TEMP%`, `MoveFileExW`) and a
+`process_windows.cpp` that starts children with `CreateProcessW`. Arguments are
+quoted with the Microsoft C runtime rules, captured output goes through temporary
+files, and MSVC/clang-cl receive their own option syntax.
+
+**Why.** A POSIX emulation layer would put an untested dependency between the
+compiler and the platform, and WSL is a different operating system from the user's
+point of view. Capturing output in files rather than pipes avoids the classic
+two-pipe deadlock without threads.
+
+**Consequences.** Two implementations of the platform seam must be kept in step.
+The Windows path is verified by a CI job on GitHub's `windows-latest` with MSVC; no
+other Windows toolchain is advertised.
+
+**Alternatives rejected.** (a) MinGW-only support: it is not the default toolchain
+users have. (b) Documenting WSL as the Windows story: it is not a native
+implementation and leaves the compiler untested on the platform it claims.

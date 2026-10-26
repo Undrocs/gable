@@ -23,7 +23,9 @@ struct BuildOptions {
   std::string outputPath;
   /// 0, 1, or 2. Passed to the C compiler as -O<n>.
   int optimizationLevel = 0;
-  /// C compiler executable. Empty means $GABLE_CC, then "cc".
+  /// C compiler executable. Empty means $GABLE_CC, then the platform default.
+  /// MSVC and clang-cl are invoked with slash options; every other compiler is
+  /// treated as GCC/Clang-compatible.
   std::string cCompiler;
   /// Directory containing gable/rt.h. Empty means automatic discovery.
   std::string runtimeIncludeDir;
@@ -66,7 +68,8 @@ BuildOutput emitCTranslationUnit(const std::string& sourcePath, const BuildOptio
 BuildOutput emitCTranslationUnitToFile(const std::string& sourcePath, const BuildOptions& options,
                                        const std::string& targetPath, std::ostream& diagnostics);
 
-/// Resolves the C compiler that will be used: explicit option, $GABLE_CC, "cc".
+/// Resolves the C compiler that will be used: explicit option, $GABLE_CC, then
+/// the platform default ("cc" on POSIX hosts, "cl" on Windows).
 std::string resolveCCompiler(const BuildOptions& options);
 
 }  // namespace gable

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
   gable
-  VERSION 0.1.0
+  VERSION 0.2.0
   DESCRIPTION "The Gable programming language compiler"
   HOMEPAGE_URL "https://github.com/Undrocs/gable"
   LANGUAGES C CXX
@@ -29,15 +29,9 @@ include(CTest)
 option(GABLE_ENABLE_SANITIZERS "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(GABLE_WARNINGS_AS_ERRORS "Treat compiler warnings in Gable's own code as errors" OFF)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  message(FATAL_ERROR
-    "Gable does not support Windows hosts yet. The compiler driver currently relies on POSIX "
-    "process control (fork/exec). See docs/roadmap.md.")
-endif()
-
 add_library(gable_warnings INTERFACE)
 if(MSVC)
-  target_compile_options(gable_warnings INTERFACE /W4)
+  target_compile_options(gable_warnings INTERFACE /W4 /utf-8 /Zc:__cplusplus)
 else()
   target_compile_options(gable_warnings INTERFACE
     -Wall
@@ -49,6 +43,13 @@ else()
     -Wnon-virtual-dtor
     -Wold-style-cast
   )
+endif()
+# GCC 12 reports -Wrestrict false positives inside libstdc++'s char_traits when
+# strings are concatenated at -O2 and above, which makes warning-free Release
+# builds impossible. The warning never points at Gable code, so it is disabled
+# for GCC only; Clang does not implement it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(gable_warnings INTERFACE -Wno-restrict)
 endif()
 if(GABLE_WARNINGS_AS_ERRORS)
   if(MSVC)
@@ -73,9 +74,34 @@ target_include_directories(gable_runtime PUBLIC
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 set_target_properties(gable_runtime PROPERTIES OUTPUT_NAME gable_rt)
+
+# Host-specific process control and platform services.
+if(WIN32)
+  set(GABLE_PLATFORM_SOURCES
+    compiler/src/platform/windows.cpp
+    compiler/src/driver/process_windows.cpp
+  )
+else()
+  set(GABLE_PLATFORM_SOURCES
+    compiler/src/platform/posix.cpp
+    compiler/src/driver/process_posix.cpp
+  )
+endif()
 target_compile_options(gable_runtime PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic>
 )
+if(MSVC)
+  # The runtime uses fopen/fwrite-style APIs on purpose; they are the portable
+  # subset of the C library across every host we support.
+  target_compile_definitions(gable_runtime PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
+# Static library file names follow the platform's convention.
+if(WIN32)
+  set(GABLE_INSTALL_RUNTIME_LIB_NAME "${CMAKE_INSTALL_FULL_LIBDIR}/gable_rt.lib")
+else()
+  set(GABLE_INSTALL_RUNTIME_LIB_NAME "${CMAKE_INSTALL_FULL_LIBDIR}/libgable_rt.a")
+endif()
 
 # ---------------------------------------------------------------------------
 # Compiler library (C++20)
@@ -91,10 +117,9 @@ add_library(gable_compiler STATIC
   compiler/src/codegen/c_backend.cpp
   compiler/src/driver/frontend.cpp
   compiler/src/driver/loader.cpp
-  compiler/src/platform/posix.cpp
   compiler/src/driver/output.cpp
-  compiler/src/driver/process.cpp
   compiler/src/driver/temporary.cpp
+  ${GABLE_PLATFORM_SOURCES}
   compiler/src/driver/toolchain.cpp
   compiler/src/cli/cli.cpp
   compiler/src/cli/version.cpp
@@ -112,7 +137,7 @@ target_compile_definitions(gable_compiler PRIVATE
   GABLE_BUILD_RUNTIME_INCLUDE="${CMAKE_CURRENT_SOURCE_DIR}/runtime/include"
   GABLE_BUILD_RUNTIME_LIB="$<TARGET_FILE:gable_runtime>"
   GABLE_INSTALL_RUNTIME_INCLUDE="${CMAKE_INSTALL_FULL_INCLUDEDIR}"
-  GABLE_INSTALL_RUNTIME_LIB="${CMAKE_INSTALL_FULL_LIBDIR}/libgable_rt.a"
+  GABLE_INSTALL_RUNTIME_LIB="${GABLE_INSTALL_RUNTIME_LIB_NAME}"
 )
 
 if(GABLE_ENABLE_SANITIZERS)

@@ -9,55 +9,62 @@ please report it.
 
 | Area | Status |
 | --- | --- |
-| Source handling | UTF-8 validated, CRLF accepted, NUL rejected, 64 MiB size limit |
-| Lexing | keywords, identifiers, decimal/hex/binary literals with 64-bit range check, strings with escapes and Unicode escapes, `//` and nested `/* */` comments, reserved `u` suffix and `&`/`|` diagnostics |
-| Parsing | functions, parameters, return types, `let`/`var`, assignment, expression statements, `return`, `if`/`else if`/`else`, `while`, nested blocks, empty statements, full operator precedence, error recovery, 200-level nesting cap |
-| Semantics | scopes, shadowing, duplicate detection, immutability, literal contextual typing with range checks, no implicit conversions, integer-only arithmetic, boolean conditions, division-by-zero constant rejection, return-path analysis, `main` signature checks, `print` validation |
-| Diagnostics | `path:line:column: severity: message`, source line and caret, multi-error runs, de-duplicated cascades, windowed rendering for very long lines |
-| Code generation | typed IR to C17, wrapping arithmetic, runtime division helpers, pooled string literals, forward declarations, entry point wrapper, `--emit-c` |
-| Toolchain | `build`, `run`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, runtime discovery, structured process execution, RAII temporary directories |
-| Runtime | `print` for `str`, `bool`, signed and unsigned integers; division-by-zero trap with exit status 70 |
-| Testing | 142 unit tests, 34 integration cases, 6 examples, sanitizer configuration |
+| Source handling | UTF-8 validated, CRLF accepted, NUL rejected, 64 MiB per-file limit, 512-file limit |
+| Lexing | keywords, identifiers, decimal/hex/binary literals with 64-bit range check, strings with escapes and Unicode escapes, `//` and nested `/* */` comments, `[` `]` `.` `..`, reserved `u` suffix and `&`/`|` diagnostics |
+| Parsing | functions, structs, imports, `let`/`var`, assignment, expression statements, `return`, `if`/`else if`/`else`, `while`, `for` over ranges and arrays, `break`, `continue`, nested blocks, array types and literals, field access, indexing, `as`, full operator precedence, error recovery, 200-level nesting cap |
+| Semantics | one program-wide namespace across files, scopes and shadowing, duplicate detection, immutability and parameter rules, struct field resolution and containment-cycle detection, array type interning, literal contextual typing with range checks, no implicit conversions, string operator rules, return-path analysis, loop control checks, `main` signature checks, builtin validation |
+| Diagnostics | `path:line:column: severity: message` naming the file, source line and caret, notes, multi-error runs, de-duplicated cascades, windowed rendering for very long lines |
+| Code generation | typed IR to C17, explicit left-to-right evaluation order with short-circuiting preserved, wrapping arithmetic, runtime division helpers, bounds checks, array wrapper structs, dependency-ordered struct typedefs, `--emit-c` |
+| Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
+| Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
+| Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70 |
+| Testing | 197 unit tests, 53 integration cases, 10 examples, 40 notes-tool tests, sanitizer configuration |
 
 ## Known bugs and rough edges
 
+* **No memory reclamation.** Strings built at run time and file contents are never
+  freed. A long-running program that concatenates strings grows without bound.
+  This is the largest known consequence of the v0.2 design (ADR 0017).
+* **No dynamic arrays or maps.** Every array has a compile-time length. Tools must
+  use fixed-size storage or stream over their data, as `tools/notes` does.
 * **Exit status ambiguity under `run`.** A program returning 1, 2, or 70 is
-  indistinguishable from a compiler failure by exit status. Output distinguishes
-  them today; machine-readable CLI output is planned.
+  indistinguishable from a compiler failure by exit status alone.
 * **No debug information for Gable source.** Debugging a generated executable means
   reading C-level line information.
-* **`evaluation order`** of operands in a binary expression is unspecified except
-  for `&&`/`||` short-circuiting. Generated C mirrors that; do not write programs
-  that depend on the order of side effects in one expression.
+* **Byte-oriented strings.** `str_slice`, `str_find`, and `.len` count bytes, not
+  characters, and slicing can split a UTF-8 sequence. There is no character
+  iteration API yet.
 * **Long diagnostics on generated code.** When the C compiler rejects generated
-  code, the C compiler's own message is shown. It is accurate but refers to the
-  generated file, not to Gable source.
+  code, its own message is shown. It is accurate but refers to the generated file,
+  not to Gable source.
 * **No incremental builds.** Every `gable build` re-runs the frontend and the C
   compiler from scratch.
-* **Temporary directory retention on failure.** Intentional, but it leaves files in
-  `TMPDIR` after an internal error so the generated C can be inspected.
+* **Temporary directory retention on failure.** Intentional: it leaves files in the
+  temporary directory after an internal error so the generated C can be inspected.
+* **Non-ASCII arguments on Windows** are converted from the process ANSI code page.
+  On a system with a non-UTF-8 code page, arguments that the code page cannot
+  represent are not recoverable.
 
 ## Missing language features
 
-* Modules, imports, or multi-file programs.
-* Arrays, records/structs, enums, tuples, pointers, references.
 * Generics, traits, closures, first-class functions, overloading.
-* Explicit conversions and casts.
-* `break`, `continue`, `for`, `loop`, labelled control flow.
+* Dynamic arrays, maps, sets, enums, tuples, unions, pointers, references.
 * Bitwise and shift operators (`&` and `|` reserved).
-* String concatenation, comparison, indexing, length, formatting.
+* Character-level string iteration, formatting beyond `str_of_i64`/`str_of_bool`.
 * Constants, compile-time evaluation, macros, attributes.
-* Pattern matching, error handling (no `Result`/`try`), `defer`/`finally`.
-* Any concurrency, async, or memory-management model beyond stack values.
-* Any standard library beyond `print`.
-* User-defined output formatting (no `print` of custom values).
+* Pattern matching, exceptions, `defer`/`finally`.
+* Modules with visibility, package management, separate compilation.
+* Any concurrency, async, or memory-management model beyond stack values and
+  never-freed allocations.
+* A standard library beyond the built-ins in the specification.
+* User-defined printing (no `print` of a struct or array).
 
 ## Missing engineering infrastructure
 
 * No LLVM backend (see [decisions.md](decisions.md), entry 0001).
-* No Windows support; the driver is POSIX-only and configuration fails early.
-* No macOS or ARM verification has been performed by the project: the code uses
-  portable C++20 and C17, but only Linux x86-64 has been built and tested here.
+* No verification on macOS, ARM, or Windows with toolchains other than MSVC. CI
+  runs Linux with GCC and Clang and Windows with MSVC; anything else is untested
+  and not advertised.
 * No fuzzing harness integrated into CI (robustness tests use deterministic
   pseudo-random inputs; libFuzzer/AFL integration is future work).
 * No formatter, linter, language server, editor grammar, or package manager.
@@ -72,9 +79,16 @@ These are specified decisions, not gaps:
 
 * Integer overflow wraps; it does not trap.
 * Division by zero is a compile-time error for constant zero and a runtime trap
-  otherwise.
-* `INT_MIN / -1` wraps.
-* No implicit numeric conversions; literals take their type from context.
+  otherwise; the minimum value divided by -1 wraps.
+* No implicit numeric conversions, including between integer widths; `as` is the
+  only conversion and it is defined bit-wise.
 * Conditions must be `bool`; there is no truthiness.
 * Semicolons are required; newlines are whitespace.
+* Every binding has an initializer.
 * `main` must be `fn main() -> i32`.
+* Evaluation order is left to right, specified by the language rather than
+  inherited from the C backend.
+* Structs and arrays are values: assignment, arguments, and returns copy.
+* Structs cannot contain themselves by value.
+* Recoverable failures (file I/O, parsing a number) return result structs instead
+  of trapping.

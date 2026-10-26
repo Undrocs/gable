@@ -28,29 +28,50 @@ Hello from Gable!
 
 ## What works
 
-* `.gable` source files, UTF-8 input, line/column diagnostics with source context.
+* `.gable` source files, UTF-8 input, line/column diagnostics that name the file,
+  including multi-file programs.
 * Handwritten lexer and a recursive-descent parser with Pratt expression parsing.
-* Semantic analysis: lexical scopes, shadowing, name resolution, duplicate
-  detection, `let`/`var` immutability, return-path checking.
-* Types: `i8` `i16` `i32` `i64`, `u8` `u16` `u32` `u64`, `bool`, `str`, `void`.
+* Semantic analysis: one program-wide namespace across imported files, lexical
+  scopes, shadowing, duplicate detection, `let`/`var` immutability, return-path
+  checking.
+* Types: `i8` `i16` `i32` `i64`, `u8` `u16` `u32` `u64`, `bool`, `str`, `void`,
+  value structs, and fixed-size arrays.
 * Arithmetic (wrapping, defined), comparison, boolean operators with
-  short-circuiting, unary `-` and `!`.
-* Functions, parameters, recursion, mutual recursion, conditionals, `while` loops,
-  nested blocks, `print`.
+  short-circuiting, explicit `as` conversions with defined narrowing.
+* Functions, parameters, recursion, mutual recursion, conditionals, `while`,
+  `for` over ranges and arrays, `break`, `continue`, nested blocks.
+* Strings with an explicit length: concatenation, equality, byte length, search,
+  slicing, trimming, and number conversion.
+* Command-line arguments and whole-file text input and output that report failures
+  as values instead of trapping.
 * Native executables through a typed IR and a C17 backend, plus `--emit-c` for
   inspecting the generated code.
-* `gable build` and `gable run`, with defined exit statuses.
-* 142 unit tests and 34 end-to-end cases plus 6 example programs, run in Debug,
-  Release, and AddressSanitizer/UBSan configurations.
+* `gable build`, `gable run`, and `gable check`, with defined exit statuses and
+  atomic, input-safe output handling.
+* 197 unit tests, 53 end-to-end cases, 10 example programs, and 40 acceptance tests
+  for the notes tool — run in Debug, Release, and AddressSanitizer/UBSan
+  configurations.
+
+## Platform support
+
+| Host | Toolchain | Status |
+| --- | --- | --- |
+| Linux x86-64 | GCC, Clang | verified in CI |
+| Windows x64 | MSVC | verified in CI |
+| macOS, ARM hosts | GCC/Clang via the POSIX implementation | expected to work, not verified, not advertised |
+
+Only the platforms in the first two rows are advertised as supported, because CI
+runs on them. Everything else is untested.
 
 ## What does not work yet
 
-No modules, arrays, records, generics, closures, pointers, casts, `break`/
-`continue`, string operations, or standard library beyond `print`. Windows is not
-supported. There is no LLVM backend yet: the current backend emits C17 and uses the
-host C compiler, because no LLVM development files were available when it was
-written. [docs/decisions.md](docs/decisions.md) explains that decision and the
-migration path in detail.
+No generics, traits, closures, pointers, enums, dynamic arrays, maps, or
+exceptions. There is no memory reclamation: strings built at run time are never
+freed. There is no formatter, language server, or package manager. The backend
+emits C17 and uses the host C compiler; there is no LLVM backend yet, because no
+LLVM development files were available when the first backend was written.
+[docs/decisions.md](docs/decisions.md) explains that decision and the migration
+path in detail.
 
 See [docs/limitations.md](docs/limitations.md) for the full list and
 [docs/roadmap.md](docs/roadmap.md) for what is planned.
@@ -61,7 +82,7 @@ See [docs/limitations.md](docs/limitations.md) for the full list and
 * C17 compiler (used by the backend)
 * CMake 3.20+
 * Ninja (recommended)
-* Linux or macOS
+* Linux or Windows (the C toolchain above is what the backend invokes)
 
 No third-party libraries are needed to build the compiler.
 
@@ -86,7 +107,9 @@ ctest --test-dir build/debug --output-on-failure
 ```bash
 ./build/debug/gable build hello.gable -o hello   # produces an executable
 ./build/debug/gable run hello.gable              # compiles and executes
+./build/debug/gable check hello.gable            # type checks, writes nothing
 ./build/debug/gable build hello.gable --emit-c   # shows the generated C17
+./build/debug/gable run tools/notes/notes.gable -- list
 ```
 
 `gable --help` lists every option. [docs/getting-started.md](docs/getting-started.md)
@@ -96,7 +119,7 @@ documents the build, the CLI, environment variables, and troubleshooting.
 
 | Document | Contents |
 | --- | --- |
-| [docs/specification.md](docs/specification.md) | Language specification for version 0.1 |
+| [docs/specification.md](docs/specification.md) | Language specification for version 0.2 |
 | [docs/architecture.md](docs/architecture.md) | Compiler pipeline and component responsibilities |
 | [docs/decisions.md](docs/decisions.md) | Design decisions, rejected alternatives, revisit triggers |
 | [docs/getting-started.md](docs/getting-started.md) | Build, install, CLI reference, exit statuses |
@@ -112,6 +135,7 @@ compiler/        C++20 compiler library and the `gable` CLI
   src/           lexer, parser, ast, semantic, types, codegen, driver, cli
 runtime/         C17 runtime linked into every executable
 examples/        example programs, exercised by the test suite
+tools/notes/     the acceptance program: a task list written in Gable
 tests/unit/      unit tests (lexer, parser, semantics, codegen, CLI, robustness)
 tests/integration/ data-driven end-to-end cases
 docs/            specification, architecture, decisions, roadmap

@@ -5,7 +5,9 @@
 
 #include "gable/platform.h"
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -55,6 +57,36 @@ std::string temporaryDirectoryRoot() {
     return tmpdir;
   }
   return "/tmp";
+}
+
+std::string createTemporaryDirectory(std::string& error) {
+  std::string root = temporaryDirectoryRoot();
+  while (!root.empty() && root.back() == '/') {
+    root.pop_back();
+  }
+  std::string pattern = root + "/gable-XXXXXX";
+
+  std::vector<char> buffer(pattern.begin(), pattern.end());
+  buffer.push_back('\0');
+  if (::mkdtemp(buffer.data()) == nullptr) {
+    error = std::string("cannot create a temporary directory: ") + std::strerror(errno);
+    return {};
+  }
+  return std::string(buffer.data());
+}
+
+std::string defaultCCompiler() { return "cc"; }
+
+std::string executableSuffix() { return {}; }
+
+bool replaceFile(const std::string& source, const std::string& destination, std::string& error) {
+  std::error_code code;
+  std::filesystem::rename(source, destination, code);
+  if (code) {
+    error = code.message();
+    return false;
+  }
+  return true;
 }
 
 }  // namespace gable::platform

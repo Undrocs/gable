@@ -42,9 +42,37 @@ Functions, variables, branches, loops, strings, standard output, examples,
 `gable build`, `gable run`, expanded end-to-end tests.
 
 Verified by: 34 integration cases plus 6 example programs executed on every test
-run.
+run at the time; the suites have since grown to 53 cases and 10 examples.
 
-## Milestone 5 — LLVM backend
+## Milestone 5 — Comfortable to use (language 0.2) · complete
+
+Review of 0.1 identified correctness gaps before features, and usability gaps
+before new surface area.
+
+* Output safety: no output path may overwrite an input, including through
+  symlinks and hard links; outputs are written to a temporary file and replaced in
+  one step; a failed build never damages the previous executable.
+* Defined evaluation order for call arguments and non-short-circuit operands, with
+  `&&`/`||` still short-circuiting.
+* Multi-file programs with a minimal `import` model: cycles rejected, each file
+  parsed once, one program-wide namespace.
+* Value structs and fixed-size arrays with bounds-checked element access.
+* `str` with an explicit length, equality, concatenation, byte length, and library
+  operations; bytes versus characters documented.
+* Explicit integer conversions with defined narrowing, `break`, `continue`, and
+  `for` over ranges and arrays.
+* Command-line arguments and whole-file input/output with typed result structs.
+* `gable check`, clear exit statuses, and help text.
+* A native Windows implementation (wide-character paths, `CreateProcessW`,
+  temporary-file output capture, MSVC option syntax) verified by a CI job.
+* An acceptance program: `tools/notes`, a multi-file task list that takes
+  arguments, uses structs and strings, and reads and writes a text file.
+
+Verified by: 197 unit tests, 53 integration cases, 10 examples, and 40 notes-tool
+tests, all passing in Debug and under AddressSanitizer/UBSan on Linux, plus the
+same suites on Windows with MSVC.
+
+## Milestone 6 — LLVM backend
 
 Replace the C emitter as the default backend while keeping it available as
 `--backend=c`.
@@ -62,26 +90,25 @@ same integration suite; the suite runs against both backends.
 Requires: LLVM development files on the build host. The build must fail with a
 clear message when `GABLE_WITH_LLVM=ON` but LLVM is missing.
 
-## Milestone 6 — Language and standard library
+## Milestone 7 — Language and standard library
 
 Each item requires a specification update, implementation, and tests before it is
 merged.
 
-* `str` with length, concatenation, comparison, and indexing.
-* Aggregates (records/structs) and arrays.
-* `break` and `continue`.
-* Explicit conversions between integer widths, with defined rules.
-* Modules and multi-file programs.
+* Dynamic arrays and maps, which require the memory model below.
+* A memory model: ownership and reclamation of run-time strings and containers.
+* Character-level text operations and formatting.
+* Enums, tuples, and a sum type for error handling.
+* Bitwise and shift operators.
 * A `stdlib` written in Gable wherever the language allows, with C only for
   platform boundaries.
 
-Acceptance: a program larger than the current examples (a small command-line
-utility) can be written without workarounds, and the specification documents every
-construct used.
+Acceptance: a program that needs growable collections and bounded memory use can be
+written without workarounds, and the specification documents every construct
+used.
 
-## Milestone 7 — Developer experience
+## Milestone 8 — Developer experience
 
-* `gable check` (frontend only, no code generation).
 * `gable fmt` with a stable formatting policy.
 * Tree-sitter grammar and editor support.
 * Language server reusing `gable_compiler` (diagnostics, hover, go-to-definition).
@@ -91,7 +118,7 @@ construct used.
 Acceptance: a new contributor can build the toolchain, run the examples, and land
 a tested change by following `CONTRIBUTING.md`.
 
-## Milestone 8 — Self-hosting
+## Milestone 9 — Self-hosting
 
 Long-term, not scheduled.
 
@@ -110,7 +137,7 @@ passes the full test suite, and the bootstrap chain is documented.
 
 Generics, traits, pattern matching, ownership/borrowing, garbage collection,
 async/await, threads, macros, reflection, package registry, GUI frameworks, GPU
-compilation, kernel support, Windows host support.
+compilation, kernel support.
 
 Each of these is a significant design problem. They will be considered when the
 language has a stable base and a demonstrated need, not because another language

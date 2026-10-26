@@ -13,7 +13,7 @@ void gable_rt_trap(const char *message) {
   exit(GABLE_RT_TRAP_EXIT_CODE);
 }
 
-static _Noreturn void trap_divide_by_zero(void) {
+static GABLE_NORETURN void trap_divide_by_zero(void) {
   gable_rt_trap("integer division by zero");
 }
 

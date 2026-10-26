@@ -28,7 +28,7 @@ jobs:
             cxx: g++
             build_type: Release
             sanitizers: "OFF"
-            werror: "OFF"
+            werror: "ON"
           - compiler: clang
             cc: clang
             cxx: clang++
@@ -76,8 +76,13 @@ jobs:
         run: |
           ./build/gable --version
           ./build/gable run examples/hello.gable
+          ./build/gable check examples/tasks.gable
+          ./build/gable run examples/tasks.gable | head -5
           ./build/gable build examples/primes.gable -o /tmp/primes
           /tmp/primes | head -5
+          ./build/gable run examples/args.gable -- Ada Grace | head -3
+          ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt add "smoke test"
+          ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt list | grep "smoke test"
 
   install:
     name: Install and use from a prefix
@@ -102,3 +107,48 @@ jobs:
           export PATH="$HOME/gable-install/bin:$PATH"
           gable --version
           gable run examples/fibonacci.gable | head -5
+
+  windows:
+    name: Windows ${{ matrix.toolchain }} ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: msvc
+            build_type: Debug
+          - toolchain: msvc
+            build_type: Release
+    steps:
+      - uses: actions/checkout@v4
+
+      # `gable build` invokes the host C compiler, which on Windows is the one
+      # from the Visual Studio environment; this puts cl.exe on PATH.
+      - name: Set up the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+
+      - name: Smoke test the CLI
+        shell: pwsh
+        run: |
+          ./build/${{ matrix.build_type }}/gable.exe --version
+          ./build/${{ matrix.build_type }}/gable.exe run examples/hello.gable
+          ./build/${{ matrix.build_type }}/gable.exe check examples/tasks.gable
+          ./build/${{ matrix.build_type }}/gable.exe build examples/primes.gable -o primes.exe
+          ./primes.exe | Select-Object -First 5
+          ./build/${{ matrix.build_type }}/gable.exe run tools/notes/notes.gable -- --file notes.txt add "smoke test"
+          ./build/${{ matrix.build_type }}/gable.exe run tools/notes/notes.gable -- --file notes.txt list

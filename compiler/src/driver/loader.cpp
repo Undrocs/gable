@@ -77,14 +77,6 @@ class Loader {
   /// the location of the import statement. Both are zero for the root file.
   void loadFile(std::string displayPath, const fs::path& diskPath, std::string text,
                 std::uint32_t importingFile, SourceSpan importSpan) {
-    if (result_.sources.size() >= kMaxSourceFiles) {
-      diagnostics_.error(importingFile, importSpan,
-                         "this compilation would load more than " +
-                             std::to_string(kMaxSourceFiles) +
-                             " source files; split the program into fewer modules");
-      return;
-    }
-
     std::string canonical;
     if (!diskPath.empty()) {
       std::error_code code;
@@ -98,6 +90,14 @@ class Loader {
     // legal and has no effect, mirroring the include-once behaviour that makes
     // diamond-shaped import graphs usable.
     if (loaded_.count(canonical) != 0) {
+      return;
+    }
+
+    if (result_.sources.size() >= kMaxSourceFiles) {
+      diagnostics_.error(importingFile, importSpan,
+                         "this compilation would load more than " +
+                             std::to_string(kMaxSourceFiles) +
+                             " source files; split the program into fewer modules");
       return;
     }
     for (const std::string& active : stack_) {

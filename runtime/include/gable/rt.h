@@ -16,7 +16,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(__cplusplus)
+#if defined(_MSC_VER)
+#define GABLE_NORETURN __declspec(noreturn)
+#elif defined(__cplusplus)
 #define GABLE_NORETURN [[noreturn]]
 #else
 #define GABLE_NORETURN _Noreturn
@@ -105,7 +107,11 @@ gable_rt_FindResult gable_rt_str_find(gable_str haystack, gable_str needle);
 gable_rt_SliceResult gable_rt_str_slice(gable_str text, int64_t start, int64_t length);
 gable_str gable_rt_str_trim(gable_str text);
 
-/* Process arguments, made available by the generated entry point. */
+/* Process arguments, made available by the generated entry point.
+ *
+ * On Windows the arguments are converted from the process ANSI code page to
+ * UTF-8, because Gable strings are UTF-8. POSIX hosts pass byte sequences
+ * through unchanged. */
 void gable_rt_set_args(int argc, char **argv);
 int32_t gable_rt_arg_count(void);
 gable_str gable_rt_arg(int32_t index);

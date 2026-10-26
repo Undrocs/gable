@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "gable/compiler.h"
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 #include "gable/toolchain.h"
@@ -137,6 +138,14 @@ CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::os
 
   options.outputPath = parsed.outputPath.empty() ? defaultOutputPath(parsed.sourcePath)
                                                  : parsed.outputPath;
+  // `-o tool` produces `tool.exe` on Windows; the suffix is part of the path
+  // the toolchain writes and the CLI reports.
+  const std::string suffix = platform::executableSuffix();
+  if (!suffix.empty() && (options.outputPath.size() < suffix.size() ||
+                          options.outputPath.compare(options.outputPath.size() - suffix.size(),
+                                                    suffix.size(), suffix) != 0)) {
+    options.outputPath += suffix;
+  }
   const BuildOutput result = buildExecutable(parsed.sourcePath, options, err);
   if (!isSuccess(result.status)) {
     return static_cast<CliExitCode>(exitCodeFor(result.status));
@@ -308,9 +317,11 @@ void printUsage(std::ostream& out) {
       << "  and 70 are also used for the compiler's own failures.\n"
       << "\n"
       << "Environment:\n"
-      << "  GABLE_CC               C compiler used by the backend (default: cc).\n"
+      << "  GABLE_CC               C compiler used by the backend (default: cc, or cl\n"
+      << "                         on Windows).\n"
       << "  GABLE_RUNTIME_INCLUDE  Directory containing gable/rt.h.\n"
-      << "  GABLE_RUNTIME_LIB      Path to libgable_rt.a.\n";
+      << "  GABLE_RUNTIME_LIB      Path to the runtime library (libgable_rt.a on POSIX\n"
+      << "                         hosts, gable_rt.lib on Windows).\n";
 }
 
 CliExitCode runCommandLine(const std::vector<std::string>& arguments, std::ostream& out,

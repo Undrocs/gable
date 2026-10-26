@@ -5,10 +5,10 @@
 | Requirement | Version | Notes |
 | --- | --- | --- |
 | C++ compiler | C++20 | GCC 12+ or Clang 15+ |
-| C compiler | C17 | GCC or Clang; used by the backend |
+| C compiler | C17 | GCC or Clang on POSIX hosts, MSVC or clang-cl on Windows; used by the backend |
 | CMake | 3.20+ | |
 | Ninja | any | recommended; Make also works |
-| Host | Linux or macOS | Windows is not supported yet |
+| Host | Linux or Windows | Exercised by CI with GCC and Clang on Linux and with MSVC on Windows. macOS and ARM hosts use the POSIX implementation but are not verified |
 
 No third-party libraries are required, and LLVM is not required to build the
 compiler in this version (see [decisions.md](decisions.md), entry 0001).
@@ -39,13 +39,16 @@ Other presets: `release`, `asan` (AddressSanitizer and UndefinedBehaviorSanitize
 ctest --test-dir build/debug --output-on-failure
 ```
 
-Two CTest entries exist:
+Three CTest entries exist:
 
-* `unit` — 142 fast unit tests (lexer, parser, semantics, code generation, CLI,
-  robustness).
+* `unit` — 197 fast unit tests (lexer, parser, semantics including multi-file
+  programs, code generation, CLI, robustness).
+* `notes_tool` — builds `tools/notes` and drives it through its command line; this
+  is the end-to-end test for a real multi-file program.
 * `integration` — compiles and runs every case under `tests/integration/cases`
   and every program under `examples/`, comparing stdout, exit status, and
-  diagnostics. It requires a working C compiler.
+  diagnostics. Some cases pass program arguments. It requires a working C
+  compiler.
 
 ## Compile and run a program
 
@@ -78,7 +81,8 @@ Inspect the generated C (useful when reporting a backend bug):
 ```
 gable --help | --version
 gable build <file.gable> [options]
-gable run <file.gable> [options]
+gable run <file.gable> [options] [-- program arguments]
+gable check <file.gable>
 ```
 
 | Option | Meaning |
@@ -90,6 +94,24 @@ gable run <file.gable> [options]
 | `--keep-temps` | keep intermediate files and print their location |
 | `-v`, `--verbose` | print the commands that are run |
 
+`check` runs the front end and writes nothing; use it in editors and pre-commit
+hooks. Output paths are completed with `.exe` on Windows.
+
+Program arguments follow `--` and are passed to the program `run` builds:
+
+```bash
+./build/debug/gable run tools/notes/notes.gable -- add "buy milk"
+```
+
+`check` runs the front end and writes nothing; use it in editors and pre-commit
+hooks. Output paths are completed with `.exe` on Windows.
+
+Program arguments follow `--` and are passed to `gable run`'s program:
+
+```bash
+./build/debug/gable run tools/notes/notes.gable -- add "buy milk"
+```
+
 Exit statuses:
 
 | Status | Meaning |
@@ -100,17 +122,18 @@ Exit statuses:
 | 70 | internal failure: missing toolchain, or generated C did not compile |
 | other | for `run`, the executed program's exit status |
 
-A program terminated by a Gable runtime trap (integer division by zero) exits with
-status 70.
+A program terminated by a Gable runtime trap (integer division by zero, or an
+out-of-bounds array index) exits with status 70 and writes
+`gable: runtime error: ...` to standard error.
 
 ## Environment variables
 
 | Variable | Purpose |
 | --- | --- |
-| `GABLE_CC` | C compiler used by the backend (default `cc`) |
+| `GABLE_CC` | C compiler used by the backend (default `cc`, or `cl` on Windows) |
 | `GABLE_RUNTIME_INCLUDE` | directory containing `gable/rt.h` |
 | `GABLE_RUNTIME_LIB` | path to `libgable_rt.a` |
-| `TMPDIR` | parent directory for temporary build directories |
+| `TMPDIR` | parent directory for temporary build directories on POSIX hosts (Windows uses `%TEMP%`) |
 
 The runtime locations are discovered automatically for a build tree and for an
 installed compiler; the variables exist to override discovery.
@@ -121,15 +144,15 @@ installed compiler; the variables exist to override discovery.
 cmake --install build/release --prefix ~/.local
 ```
 
-This installs the `gable` binary, the runtime headers, `libgable_rt.a`, and the
-documentation. The compiler library is not installed yet because its interface is
+This installs the `gable` binary, the runtime headers, the runtime library
+(`libgable_rt.a`, or `gable_rt.lib` on Windows), and the documentation. The compiler library is not installed yet because its interface is
 not stable. Add `~/.local/bin` to `PATH` and the installed compiler will find its
 runtime through the install paths recorded at configure time.
 
 ## Learn the language
 
-The supported subset is specified in [specification.md](specification.md).
-`examples/` contains complete programs:
+The language is specified in [specification.md](specification.md). `examples/`
+contains complete programs:
 
 | Program | Demonstrates |
 | --- | --- |
@@ -139,12 +162,27 @@ The supported subset is specified in [specification.md](specification.md).
 | `primes.gable` | nested loops, early returns |
 | `collatz.gable` | mixed-width arithmetic, `while` |
 | `gcd_lcm.gable` | mutable locals, division, function composition |
+| `structs.gable` | structs, field access, pass-by-value |
+| `strings.gable` | concatenation, length, search, conversion |
+| `args.gable` | command-line arguments |
+| `tasks.gable` | arrays, `for` loops, conversions |
+
+`tools/notes` is a larger program split across three files; it accepts arguments,
+keeps tasks in a text file, and has its own test suite:
+
+```bash
+gable run tools/notes/notes.gable -- add "write the release notes"
+gable run tools/notes/notes.gable -- list
+```
 
 ## Troubleshooting
 
 **`cannot locate the Gable runtime headers`** — the compiler could not find
 `gable/rt.h`. Set `GABLE_RUNTIME_INCLUDE` to the directory containing `gable/rt.h`
 and `GABLE_RUNTIME_LIB` to `libgable_rt.a`.
+
+**`no 'main' function found`** — an executable needs `fn main() -> i32` in the root
+file or in one of the imported files.
 
 **`internal error: the C compiler failed`** — the generated C did not compile.
 The compiler keeps the generated file and prints its path; please attach it to a

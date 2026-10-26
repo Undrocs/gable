@@ -145,20 +145,14 @@ bool AtomicOutputFile::commit(std::string& error) {
     error = "internal error: the temporary file for '" + targetPath_ + "' was not produced";
     return false;
   }
-  fs::rename(temporaryPath_, targetPath_, ignored);
-  if (ignored) {
-    // rename cannot replace an existing file on every platform; retry after
-    // removing the target, which keeps the failure window as small as possible.
-    fs::remove(targetPath_, ignored);
-    ignored.clear();
-    fs::rename(temporaryPath_, targetPath_, ignored);
-    if (ignored) {
-      error = "cannot create '" + targetPath_ + "': " + ignored.message();
-      std::error_code cleanup;
-      fs::remove(temporaryPath_, cleanup);
-      committed_ = true;  // temp file already handled
-      return false;
-    }
+  // The platform replaces the destination in one step, so a reader either sees
+  // the old file or the new one.
+  if (!platform::replaceFile(temporaryPath_, targetPath_, error)) {
+    error = "cannot create '" + targetPath_ + "': " + error;
+    std::error_code cleanup;
+    fs::remove(temporaryPath_, cleanup);
+    committed_ = true;  // the temporary file is handled either way
+    return false;
   }
   committed_ = true;
   return true;
