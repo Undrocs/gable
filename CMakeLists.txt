@@ -74,6 +74,12 @@ target_include_directories(gable_runtime PUBLIC
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 set_target_properties(gable_runtime PROPERTIES OUTPUT_NAME gable_rt)
+if(MSVC)
+  # The runtime is linked into programs that the compiler driver builds with
+  # cl, so both sides use the static C runtime; mixing the static and DLL
+  # flavours fails at link time with unresolved __imp_* symbols.
+  set_property(TARGET gable_runtime PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+endif()
 
 # Host-specific process control and platform services.
 if(WIN32)

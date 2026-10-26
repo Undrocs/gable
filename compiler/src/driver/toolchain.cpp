@@ -167,6 +167,10 @@ std::vector<std::string> compilerArguments(CCompilerFamily family, const std::st
         "/std:c17",
         level,
         "/W4",
+        // The runtime is a static library built against the static CRT
+        // (CMakeLists.txt sets MultiThreaded), so the program must not import
+        // the DLL runtime; the two flavours cannot be mixed.
+        "/MT",
         "/I" + includeDir,
         // Keep the object file next to the generated C, inside the temporary
         // directory, instead of in the current working directory.
