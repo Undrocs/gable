@@ -131,11 +131,14 @@ jobs:
 
       # The configure step reports its own failure as an annotation so that a
       # failure is visible on the pull request without opening the raw log.
+      # Ninja plus the MSVC environment is used rather than the Visual Studio
+      # generator: naming a generator couples the job to one Visual Studio
+      # version, and the runner image changes that version over time.
       - name: Configure
         shell: pwsh
         run: |
           $output = cmake -S . -B build `
-            -G "Visual Studio 17 2022" -A x64 `
+            -G Ninja `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
             -DBUILD_TESTING=ON 2>&1 | Out-String
           Write-Host $output
@@ -149,15 +152,16 @@ jobs:
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
       - name: Test
-        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Smoke test the CLI
         shell: pwsh
         run: |
-          ./build/${{ matrix.build_type }}/gable.exe --version
-          ./build/${{ matrix.build_type }}/gable.exe run examples/hello.gable
-          ./build/${{ matrix.build_type }}/gable.exe check examples/tasks.gable
-          ./build/${{ matrix.build_type }}/gable.exe build examples/primes.gable -o primes.exe
+          ./build/gable.exe --version
+          ./build/gable.exe run examples/hello.gable
+          ./build/gable.exe check examples/tasks.gable
+          ./build/gable.exe build examples/primes.gable -o primes.exe
           ./primes.exe | Select-Object -First 5
-          ./build/${{ matrix.build_type }}/gable.exe run tools/notes/notes.gable -- --file notes.txt add "smoke test"
-          ./build/${{ matrix.build_type }}/gable.exe run tools/notes/notes.gable -- --file notes.txt list
+          ./build/gable.exe run examples/args.gable -- Ada Grace | Select-Object -First 3
+          ./build/gable.exe run tools/notes/notes.gable -- --file notes.txt add "smoke test"
+          ./build/gable.exe run tools/notes/notes.gable -- --file notes.txt list
