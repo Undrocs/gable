@@ -148,6 +148,17 @@ if(BUILD_TESTING)
   target_include_directories(gable_unit_tests PRIVATE tests/unit)
   add_test(NAME unit COMMAND gable_unit_tests)
 
+  # The notes tool is the v0.2 acceptance test: a real multi-file program that
+  # is built and driven through its command line.
+  add_executable(notes_tool_tests tools/notes/tests/notes_tool_tests.cpp)
+  target_link_libraries(notes_tool_tests PRIVATE gable_compiler)
+  add_test(NAME notes_tool
+    COMMAND notes_tool_tests
+      $<TARGET_FILE:gable>
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/notes/notes.gable
+  )
+  set_tests_properties(notes_tool PROPERTIES TIMEOUT 300)
+
   add_executable(gable_integration_tests tests/integration/integration_tests.cpp)
   target_link_libraries(gable_integration_tests PRIVATE gable_compiler)
   add_test(NAME integration

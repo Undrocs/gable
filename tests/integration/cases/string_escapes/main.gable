@@ -1,0 +1,9 @@
+fn main() -> i32 {
+    print("tab:\there");
+    print("line1\nline2");
+    print("quote:\"quoted\"");
+    print("backslash:\\");
+    print("\u{41}\u00e9\u{1F600}");
+    print("");
+    return 0;
+}

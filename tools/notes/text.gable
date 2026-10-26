@@ -1,0 +1,54 @@
+// Text helpers for the notes tool.
+//
+// Gable v0.2 has no dynamic arrays and no string indexing, so splitting is
+// expressed with str_find and str_slice: one line at a time, with the remainder
+// carried forward.
+
+struct LineSplit {
+    line: str,
+    rest: str,
+    hasLine: bool,
+}
+
+/// Splits off the first line of `text`. The trailing line break is dropped.
+/// A final line without a line break is returned as well; a trailing line break
+/// therefore ends the input instead of producing an empty last line.
+fn take_line(text: str) -> LineSplit {
+    let newline = str_find(text, "\n");
+    if !newline.ok {
+        return LineSplit(text, "", text.len > 0);
+    }
+    let index: i32 = newline.index as i32;
+    let length: i32 = text.len as i32;
+    let line = str_slice(text, 0, index);
+    let rest = str_slice(text, index + 1, length - index - 1);
+    if !line.ok || !rest.ok {
+        return LineSplit("", "", false);
+    }
+    return LineSplit(line.text, rest.text, true);
+}
+
+/// Splits `text` at its first tab into a status flag and a title.
+/// The stored form is `0<TAB>title` (pending) or `1<TAB>title` (done).
+struct StoredTask {
+    valid: bool,
+    done: bool,
+    title: str,
+}
+
+fn take_stored_task(text: str) -> StoredTask {
+    let tab = str_find(text, "\t");
+    if !tab.ok || tab.index != 1 {
+        return StoredTask(false, false, "");
+    }
+    let length: i32 = text.len as i32;
+    let title = str_slice(text, 2, length - 2);
+    if !title.ok {
+        return StoredTask(false, false, "");
+    }
+    let flag = str_slice(text, 0, 1);
+    if !flag.ok {
+        return StoredTask(false, false, "");
+    }
+    return StoredTask(true, flag.text == "1", title.text);
+}
