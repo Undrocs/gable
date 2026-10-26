@@ -1,0 +1,12 @@
+# Normalize line endings: Gable sources, C, C++, and documentation are LF in the
+# repository regardless of the contributor's platform.
+* text=auto eol=lf
+
+# GitHub Linguist configuration (see docs/linguist.md).
+#
+# Gable is not a registered GitHub Linguist language, so `.gable` files are not
+# counted in the repository language statistics and appear neither in the
+# Languages section nor as "Other". They are listed explicitly so the intent is
+# recorded in version control and so no future heuristic can misclassify them as
+# another language. Remove this rule if Gable is ever accepted into Linguist.
+*.gable linguist-detectable=false

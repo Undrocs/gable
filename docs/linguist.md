@@ -6,8 +6,38 @@ recognition for `.gable`, and the naming situation for "Gable".
 ## Linguist status
 
 **Gable is not currently recognised by GitHub Linguist.** No pull request has been
-opened, and none should be opened until the preconditions below hold. GitHub
-classifies unknown `.gable` files as "Other"; that is accurate today.
+opened, and none should be opened until the preconditions below hold. Linguist
+treats unknown extensions as plain text, so `.gable` files are excluded from the
+repository language statistics entirely: they do not appear as "Gable", and they
+are not counted as "Other" either.
+
+## Repository language statistics
+
+GitHub's Languages section is produced by Linguist from the **default branch**.
+`.gitattributes` at the repository root records the cases that matter here:
+
+* `*.gable linguist-detectable=false` — Gable is not a Linguist language, so its
+  sources are excluded from the statistics by design rather than by accident.
+* `* text=auto eol=lf` — line endings are normalised, so re-cloning on another
+  platform cannot change a file's byte count.
+
+As of this commit the default branch contains 24 `.cpp`, 20 `.h`, and 2 `.c`
+files, so the reported composition is C++ (about 96%), CMake (about 3%), and C
+(about 1.5%). The 40 `.gable` files — examples and test cases — are not counted.
+
+Practical consequences:
+
+* Statistics are recomputed asynchronously after a push to the default branch.
+  A repository that had no detectable code before (for example when it only
+  contained `README.md` and `LICENSE`, both of which are not detectable) will show
+  no Languages section until that recomputation finishes, and the page has to be
+  reloaded.
+* The section is only rendered for users who can read the repository. In a private
+  repository that means users with access; an anonymous visitor sees a 404 and
+  therefore no statistics at all.
+* Gable itself cannot appear in the section until Linguist accepts the language.
+  Mapping `.gable` onto an existing language with `linguist-language=` would put a
+  false label on the project and is deliberately not done.
 
 ### Preconditions from Linguist's contribution guidelines
 

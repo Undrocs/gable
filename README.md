@@ -102,7 +102,7 @@ documents the build, the CLI, environment variables, and troubleshooting.
 | [docs/getting-started.md](docs/getting-started.md) | Build, install, CLI reference, exit statuses |
 | [docs/roadmap.md](docs/roadmap.md) | Milestones with verifiable acceptance criteria |
 | [docs/limitations.md](docs/limitations.md) | Implemented functionality versus gaps |
-| [docs/linguist.md](docs/linguist.md) | GitHub language recognition status and naming |
+| [docs/linguist.md](docs/linguist.md) | GitHub language statistics, Linguist status, and naming |
 
 ## Repository layout
 
