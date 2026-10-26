@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 
@@ -107,7 +108,8 @@ int main(int argc, char** argv) {
     std::cerr << "cannot create a temporary directory: " << temporaryError << "\n";
     return 2;
   }
-  const std::string executable = scratch->file("notes");
+  const std::string executable =
+      scratch->file("notes" + std::string(gable::platform::executableSuffix()));
   const std::string notesFile = scratch->file("notes.txt");
 
   const gable::ProcessResult build = gable::runProcessCapturing(

@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 
@@ -157,7 +158,8 @@ struct Runner {
     }
 
     // 2. `gable build` + direct execution
-    const std::string executable = scratchDir + "/" + name + "-exe";
+    const std::string executable =
+        scratchDir + "/" + name + "-exe" + gable::platform::executableSuffix();
     const gable::ProcessResult build =
         runCompiler({"build", source.string(), "-o", executable});
     if (!build.started || build.exitCode != 0) {
@@ -192,7 +194,8 @@ struct Runner {
 
   void runCompileErrorCase(const std::string& name, const fs::path& source,
                            const std::vector<std::string>& expectedMessages) {
-    const std::string executable = scratchDir + "/" + name + "-should-not-exist";
+    const std::string executable =
+        scratchDir + "/" + name + "-should-not-exist" + gable::platform::executableSuffix();
     const gable::ProcessResult build =
         runCompiler({"build", source.string(), "-o", executable});
     if (!build.started) {

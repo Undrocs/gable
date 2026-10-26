@@ -64,6 +64,16 @@ std::string defaultOutputPath(const std::string& sourcePath) {
   return path.string();
 }
 
+/// True when the final path component has no extension: the case that receives
+/// the host's executable suffix. A path with an extension is used exactly as
+/// written, because the caller named the file deliberately.
+bool hasNoExtension(const std::string& path) {
+  const std::size_t separator = path.find_last_of("/\\");
+  const std::string name =
+      separator == std::string::npos ? path : path.substr(separator + 1);
+  return name.find('.') == std::string::npos;
+}
+
 bool isSuccess(ToolchainStatus status) { return status == ToolchainStatus::Success; }
 
 /// Builds and runs `parsed`. Returns the exit code the CLI should report.
@@ -139,11 +149,13 @@ CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::os
   options.outputPath = parsed.outputPath.empty() ? defaultOutputPath(parsed.sourcePath)
                                                  : parsed.outputPath;
   // `-o tool` produces `tool.exe` on Windows; the suffix is part of the path
-  // the toolchain writes and the CLI reports.
+  // the toolchain writes and the CLI reports. A path that already has an
+  // extension is left alone: the caller named the file deliberately, and
+  // rewriting it would surprise anyone who asked for a specific name.
   const std::string suffix = platform::executableSuffix();
-  if (!suffix.empty() && (options.outputPath.size() < suffix.size() ||
-                          options.outputPath.compare(options.outputPath.size() - suffix.size(),
-                                                    suffix.size(), suffix) != 0)) {
+  std::error_code ignored;
+  if (!suffix.empty() && hasNoExtension(options.outputPath) &&
+      !fs::is_directory(options.outputPath, ignored)) {
     options.outputPath += suffix;
   }
   const BuildOutput result = buildExecutable(parsed.sourcePath, options, err);

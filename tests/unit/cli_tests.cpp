@@ -8,9 +8,16 @@
 #include <vector>
 
 #include "gable/cli.h"
+#include "gable/platform.h"
 #include "gable/temporary.h"
 
 namespace {
+
+/// The compiler completes an output path that has no extension with the host's
+/// executable suffix, so tests refer to the produced file through this helper.
+std::string executablePath(const std::string& path) {
+  return path + gable::platform::executableSuffix();
+}
 
 struct Run {
   int exitCode;
@@ -204,7 +211,7 @@ GABLE_TEST(cli_accepts_output_paths_with_spaces) {
   const std::string output = nested + "/pro gram";
   const Run run = runCli({"build", source, "-o", output});
   GABLE_CHECK_EQ(0, run.exitCode);
-  GABLE_CHECK(std::ifstream(output).good());
+  GABLE_CHECK(std::ifstream(executablePath(output)).good());
 }
 
 GABLE_TEST(cli_reports_missing_output_directory) {
@@ -231,7 +238,7 @@ GABLE_TEST(cli_keeps_existing_executable_when_build_fails) {
   const std::string output = directory.file("existing");
   GABLE_CHECK_EQ(0, runCli({"build", source, "-o", output}).exitCode);
 
-  std::ifstream before(output, std::ios::binary);
+  std::ifstream before(executablePath(output), std::ios::binary);
   std::stringstream original;
   original << before.rdbuf();
   before.close();
@@ -241,7 +248,7 @@ GABLE_TEST(cli_keeps_existing_executable_when_build_fails) {
   const Run failed = runCli({"build", source, "-o", output});
   GABLE_CHECK_EQ(1, failed.exitCode);
 
-  std::ifstream after(output, std::ios::binary);
+  std::ifstream after(executablePath(output), std::ios::binary);
   std::stringstream preserved;
   preserved << after.rdbuf();
   GABLE_CHECK_EQ(original.str(), preserved.str());
@@ -267,7 +274,7 @@ GABLE_TEST(cli_default_output_path_drops_gable_extension) {
   const std::string source = writeSource(directory, "program.gable", gabletest::kSimpleProgram());
   const Run run = runCli({"build", source});
   GABLE_CHECK_EQ(0, run.exitCode);
-  GABLE_CHECK(std::ifstream(directory.file("program")).good());
+  GABLE_CHECK(std::ifstream(executablePath(directory.file("program"))).good());
 }
 
 GABLE_TEST(cli_builds_executable_at_requested_path) {
@@ -277,7 +284,7 @@ GABLE_TEST(cli_builds_executable_at_requested_path) {
   const Run run = runCli({"build", source, "-o", output});
   GABLE_CHECK_EQ(0, run.exitCode);
   GABLE_CHECK_EQ(std::string(""), run.err);
-  GABLE_CHECK(std::ifstream(output).good());
+  GABLE_CHECK(std::ifstream(executablePath(output)).good());
 }
 
 GABLE_TEST(cli_verbose_reports_produced_executable) {
@@ -297,7 +304,7 @@ GABLE_TEST(cli_check_accepts_a_valid_program) {
   GABLE_CHECK_EQ(std::string(""), run.err);
   GABLE_CHECK_EQ(std::string(""), run.out);
   // 'check' writes no output at all.
-  GABLE_CHECK(!std::ifstream(directory.file("valid")).good());
+  GABLE_CHECK(!std::ifstream(executablePath(directory.file("valid"))).good());
 }
 
 GABLE_TEST(cli_check_reports_type_errors) {

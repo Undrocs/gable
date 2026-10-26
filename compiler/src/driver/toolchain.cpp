@@ -32,13 +32,22 @@ std::string environmentOr(const char* name, const std::string& fallback) {
   return fallback;
 }
 
+/// Static library file name used by the C toolchain on this host.
+const char* runtimeLibraryFileName() {
+#if defined(_WIN32)
+  return "gable_rt.lib";
+#else
+  return "libgable_rt.a";
+#endif
+}
+
 struct RuntimePaths {
   std::string includeDir;
   std::string libraryPath;
 };
 
 /// Runtime directories next to the running binary: <prefix>/bin/gable implies
-/// <prefix>/include/gable/rt.h and <prefix>/lib/libgable_rt.a. This keeps an
+/// <prefix>/include/gable/rt.h and <prefix>/lib/<runtime library>. This keeps an
 /// installed compiler working when it is installed with a prefix that differs
 /// from the one chosen at configure time.
 struct ExecutableRelativePaths {
@@ -54,7 +63,7 @@ ExecutableRelativePaths executableRelativeRuntime() {
   }
   const fs::path prefix = fs::path(executable).parent_path().parent_path();
   paths.includeDir = (prefix / "include").string();
-  paths.libraryPath = (prefix / "lib" / "libgable_rt.a").string();
+  paths.libraryPath = (prefix / "lib" / runtimeLibraryFileName()).string();
   return paths;
 }
 
@@ -118,9 +127,9 @@ bool resolveRuntimePaths(const BuildOptions& options, RuntimePaths& paths, std::
     return false;
   }
   if (libraryPath.empty() || !fs::is_regular_file(libraryPath)) {
-    error =
-        "cannot locate the Gable runtime library (libgable_rt.a). Set GABLE_RUNTIME_LIB to the "
-        "library file.";
+    error = std::string("cannot locate the Gable runtime library (") +
+            runtimeLibraryFileName() +
+            "). Set GABLE_RUNTIME_LIB to the library file.";
     return false;
   }
 

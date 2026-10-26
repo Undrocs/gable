@@ -152,7 +152,16 @@ jobs:
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        shell: pwsh
+        run: |
+          $output = ctest --test-dir build --output-on-failure 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            $tail = $output.Substring([Math]::Max(0, $output.Length - 6000))
+            $message = $tail -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=ctest failed::$message"
+            exit 1
+          }
 
       - name: Smoke test the CLI
         shell: pwsh
