@@ -1,0 +1,40 @@
+# Build trees
+build/
+cmake-build-*/
+out/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+# Editors and tooling
+.vscode/
+.idea/
+.cache/
+.clangd/
+compile_flags.txt
+*.swp
+*~
+
+# Compiled Gable programs and generated code
+*.gable.c
+*.gable.o
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local experiment output
+/tmp/
+scratch/

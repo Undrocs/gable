@@ -1,0 +1,37 @@
+name: Language proposal
+description: Propose a change to Gable's syntax or semantics
+labels: ["language"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Language changes need a specification update, an implementation, and tests.
+        Keep the proposal small enough to evaluate.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can a programmer not express or not express safely today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The syntax and semantics you propose. Be precise about edge cases.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including doing nothing.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Effect on existing programs, the specification, the runtime ABI, and the backends.
+    validations:
+      required: true

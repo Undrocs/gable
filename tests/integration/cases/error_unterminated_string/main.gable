@@ -1,0 +1,4 @@
+fn main() -> i32 {
+    print("oops);
+    return 0;
+}

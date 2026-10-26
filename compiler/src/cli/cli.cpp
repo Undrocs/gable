@@ -1,0 +1,316 @@
+#include "gable/cli.h"
+
+#include <filesystem>
+#include <fstream>
+#include <ostream>
+#include <string>
+#include <vector>
+
+#include "gable/process.h"
+#include "gable/temporary.h"
+#include "gable/toolchain.h"
+#include "gable/version.h"
+
+namespace gable {
+namespace {
+
+namespace fs = std::filesystem;
+
+struct ParsedCommand {
+  enum class Action { Build, Run, Help, Version };
+
+  Action action = Action::Help;
+  std::string sourcePath;
+  std::string outputPath;
+  std::string emitCPath;
+  bool emitC = false;
+  bool keepTemporaryFiles = false;
+  bool verbose = false;
+  int optimizationLevel = 0;
+  std::vector<std::string> programArguments;
+};
+
+int exitCodeFor(ToolchainStatus status) {
+  switch (status) {
+    case ToolchainStatus::Success:
+      return static_cast<int>(CliExitCode::Success);
+    case ToolchainStatus::CompilationFailed:
+      return static_cast<int>(CliExitCode::CompilationFailed);
+    case ToolchainStatus::InternalFailure:
+      return static_cast<int>(CliExitCode::InternalFailure);
+  }
+  return static_cast<int>(CliExitCode::InternalFailure);
+}
+
+bool parseOptimizationLevel(const std::string& value, int& level) {
+  if (value.size() != 3 || value[0] != '-' || value[1] != 'O') {
+    return false;
+  }
+  if (value[2] < '0' || value[2] > '2') {
+    return false;
+  }
+  level = value[2] - '0';
+  return true;
+}
+
+/// Default output path for `build`: the source path without its extension.
+std::string defaultOutputPath(const std::string& sourcePath) {
+  fs::path path(sourcePath);
+  path.replace_extension();
+  return path.string();
+}
+
+bool isSuccess(ToolchainStatus status) { return status == ToolchainStatus::Success; }
+
+/// Builds and runs `parsed`. Returns the exit code the CLI should report.
+CliExitCode executeRun(const ParsedCommand& parsed, std::ostream& out, std::ostream& err) {
+  (void)out;
+  std::string temporaryError;
+  auto temporary = TemporaryDirectory::create(temporaryError);
+  if (!temporary) {
+    err << "gable: error: " << temporaryError << '\n';
+    return CliExitCode::InternalFailure;
+  }
+
+  BuildOptions options;
+  options.outputPath = temporary->file("program");
+  options.optimizationLevel = parsed.optimizationLevel;
+  options.keepTemporaryFiles = parsed.keepTemporaryFiles;
+  options.verbose = parsed.verbose;
+
+  const BuildOutput build = buildExecutable(parsed.sourcePath, options, err);
+  if (!isSuccess(build.status)) {
+    return static_cast<CliExitCode>(exitCodeFor(build.status));
+  }
+
+  std::string processError;
+  const int exitCode = runProcessInheriting({build.executablePath}, processError);
+  if (!processError.empty()) {
+    err << "gable: error: " << processError << '\n';
+  }
+  if (exitCode < 0) {
+    return CliExitCode::InternalFailure;
+  }
+  return static_cast<CliExitCode>(exitCode);
+}
+
+CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::ostream& err) {
+  BuildOptions options;
+  options.optimizationLevel = parsed.optimizationLevel;
+  options.keepTemporaryFiles = parsed.keepTemporaryFiles;
+  options.verbose = parsed.verbose;
+
+  if (parsed.emitC) {
+    if (parsed.emitCPath.empty()) {
+      const BuildOutput result = emitCTranslationUnit(parsed.sourcePath, options, out, err);
+      return static_cast<CliExitCode>(exitCodeFor(result.status));
+    }
+    std::ofstream file(parsed.emitCPath, std::ios::binary | std::ios::trunc);
+    if (!file) {
+      err << "gable: error: cannot open '" << parsed.emitCPath << "' for writing\n";
+      return CliExitCode::UsageError;
+    }
+    const BuildOutput result = emitCTranslationUnit(parsed.sourcePath, options, file, err);
+    if (!file) {
+      err << "gable: error: failed while writing '" << parsed.emitCPath << "'\n";
+      return CliExitCode::InternalFailure;
+    }
+    return static_cast<CliExitCode>(exitCodeFor(result.status));
+  }
+
+  options.outputPath = parsed.outputPath.empty() ? defaultOutputPath(parsed.sourcePath)
+                                                 : parsed.outputPath;
+  if (fs::path(options.outputPath) == fs::path(parsed.sourcePath)) {
+    err << "gable: error: refusing to overwrite the source file '" << parsed.sourcePath
+        << "'; pass -o with a different path\n";
+    return CliExitCode::UsageError;
+  }
+
+  const BuildOutput result = buildExecutable(parsed.sourcePath, options, err);
+  if (!isSuccess(result.status)) {
+    return static_cast<CliExitCode>(exitCodeFor(result.status));
+  }
+  if (parsed.verbose) {
+    out << "gable: produced " << result.executablePath << '\n';
+  }
+  return CliExitCode::Success;
+}
+
+/// Parses `arguments`. Returns false and writes to `err` on a usage error.
+bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& parsed,
+                    std::ostream& err) {
+  if (arguments.empty()) {
+    parsed.action = ParsedCommand::Action::Help;
+    return true;
+  }
+
+  const std::string& command = arguments[0];
+  if (command == "--help" || command == "-h" || command == "help") {
+    parsed.action = ParsedCommand::Action::Help;
+    return true;
+  }
+  if (command == "--version" || command == "-V" || command == "version") {
+    parsed.action = ParsedCommand::Action::Version;
+    return true;
+  }
+  if (command == "build") {
+    parsed.action = ParsedCommand::Action::Build;
+  } else if (command == "run") {
+    parsed.action = ParsedCommand::Action::Run;
+  } else if (!command.empty() && command[0] == '-') {
+    err << "gable: error: unknown option '" << command << "'\n";
+    return false;
+  } else {
+    err << "gable: error: unknown command '" << command << "'\n";
+    return false;
+  }
+
+  bool afterDoubleDash = false;
+  for (std::size_t i = 1; i < arguments.size(); ++i) {
+    const std::string& argument = arguments[i];
+
+    if (afterDoubleDash) {
+      parsed.programArguments.push_back(argument);
+      continue;
+    }
+    if (argument == "--") {
+      afterDoubleDash = true;
+      continue;
+    }
+    if (argument == "-v" || argument == "--verbose") {
+      parsed.verbose = true;
+      continue;
+    }
+    if (argument == "--keep-temps") {
+      parsed.keepTemporaryFiles = true;
+      continue;
+    }
+    if (argument == "--emit-c") {
+      parsed.emitC = true;
+      continue;
+    }
+    if (argument.rfind("--emit-c=", 0) == 0) {
+      parsed.emitC = true;
+      parsed.emitCPath = argument.substr(std::string("--emit-c=").size());
+      if (parsed.emitCPath.empty()) {
+        err << "gable: error: --emit-c= requires a file path\n";
+        return false;
+      }
+      continue;
+    }
+    if (argument == "-o") {
+      if (i + 1 >= arguments.size()) {
+        err << "gable: error: -o requires a path\n";
+        return false;
+      }
+      parsed.outputPath = arguments[++i];
+      continue;
+    }
+    if (argument.rfind("-o", 0) == 0 && argument.size() > 2) {
+      parsed.outputPath = argument.substr(2);
+      continue;
+    }
+    int level = 0;
+    if (parseOptimizationLevel(argument, level)) {
+      parsed.optimizationLevel = level;
+      continue;
+    }
+    if (argument.rfind("-O", 0) == 0) {
+      err << "gable: error: unsupported optimization level '" << argument
+          << "'; use -O0, -O1, or -O2\n";
+      return false;
+    }
+    if (!argument.empty() && argument[0] == '-' && argument != "-") {
+      err << "gable: error: unknown option '" << argument << "'\n";
+      return false;
+    }
+    if (!parsed.sourcePath.empty()) {
+      err << "gable: error: only one source file may be given\n";
+      return false;
+    }
+    parsed.sourcePath = argument;
+  }
+
+  if (parsed.sourcePath.empty()) {
+    err << "gable: error: '" << command << "' requires a source file\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Run && parsed.emitC) {
+    err << "gable: error: --emit-c cannot be combined with 'run'\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Run && !parsed.programArguments.empty()) {
+    err << "gable: error: Gable programs cannot read command-line arguments in v0.1; "
+           "'run' does not forward the values after '--'\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Run && !parsed.outputPath.empty()) {
+    err << "gable: error: 'run' does not accept -o; use 'build' to keep the executable\n";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+void printVersion(std::ostream& out) {
+  out << "gable " << versionString() << " (language version " << languageVersionString() << ")\n";
+}
+
+void printUsage(std::ostream& out) {
+  out << "Gable compiler " << versionString() << "\n"
+      << "\n"
+      << "Usage:\n"
+      << "  gable --help | --version\n"
+      << "  gable build <file.gable> [options]\n"
+      << "  gable run <file.gable> [options]\n"
+      << "\n"
+      << "Commands:\n"
+      << "  build    Compile a Gable source file to a native executable.\n"
+      << "  run      Compile a Gable source file and execute it, forwarding its exit status.\n"
+      << "\n"
+      << "Options:\n"
+      << "  -o <path>          Output path for 'build' (default: source name without extension).\n"
+      << "  -O0 | -O1 | -O2    Optimization level passed to the C backend (default: -O0).\n"
+      << "  --emit-c[=<path>]  Write the generated C17 translation unit instead of compiling.\n"
+      << "  --keep-temps       Keep generated C and other intermediate files.\n"
+      << "  -v, --verbose      Print the commands that are run.\n"
+      << "\n"
+      << "Exit status:\n"
+      << "  0   success\n"
+      << "  1   compilation failed\n"
+      << "  2   usage error\n"
+      << "  70  internal failure (missing toolchain, invalid generated code)\n"
+      << "  For 'run', the exit status of the executed program is forwarded, except that 1, 2\n"
+      << "  and 70 are also used for the compiler's own failures.\n"
+      << "\n"
+      << "Environment:\n"
+      << "  GABLE_CC               C compiler used by the backend (default: cc).\n"
+      << "  GABLE_RUNTIME_INCLUDE  Directory containing gable/rt.h.\n"
+      << "  GABLE_RUNTIME_LIB      Path to libgable_rt.a.\n";
+}
+
+CliExitCode runCommandLine(const std::vector<std::string>& arguments, std::ostream& out,
+                           std::ostream& err) {
+  ParsedCommand parsed;
+  if (!parseArguments(arguments, parsed, err)) {
+    err << "gable: run 'gable --help' for usage\n";
+    return CliExitCode::UsageError;
+  }
+
+  switch (parsed.action) {
+    case ParsedCommand::Action::Help:
+      printUsage(out);
+      return CliExitCode::Success;
+    case ParsedCommand::Action::Version:
+      printVersion(out);
+      return CliExitCode::Success;
+    case ParsedCommand::Action::Build:
+      return executeBuild(parsed, out, err);
+    case ParsedCommand::Action::Run:
+      return executeRun(parsed, out, err);
+  }
+  return CliExitCode::UsageError;
+}
+
+}  // namespace gable

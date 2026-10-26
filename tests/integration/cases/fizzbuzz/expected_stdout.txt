@@ -1,0 +1,15 @@
+number
+number
+Fizz
+number
+Buzz
+Fizz
+number
+number
+Fizz
+Buzz
+number
+Fizz
+number
+number
+FizzBuzz

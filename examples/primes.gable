@@ -1,0 +1,25 @@
+// Trials division by every integer up to sqrt(n); prints primes below 50.
+fn is_prime(n: i64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    var divisor: i64 = 2;
+    while divisor * divisor <= n {
+        if n % divisor == 0 {
+            return false;
+        }
+        divisor = divisor + 1;
+    }
+    return true;
+}
+
+fn main() -> i32 {
+    var candidate: i64 = 2;
+    while candidate < 50 {
+        if is_prime(candidate) {
+            print(candidate);
+        }
+        candidate = candidate + 1;
+    }
+    return 0;
+}
