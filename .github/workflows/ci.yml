@@ -129,12 +129,21 @@ jobs:
         with:
           arch: x64
 
+      # The configure step reports its own failure as an annotation so that a
+      # failure is visible on the pull request without opening the raw log.
       - name: Configure
-        run: >
-          cmake -S . -B build
-          -G "Visual Studio 17 2022" -A x64
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DBUILD_TESTING=ON
+        shell: pwsh
+        run: |
+          $output = cmake -S . -B build `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DBUILD_TESTING=ON 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            $message = $output -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=cmake configure failed::$message"
+            exit 1
+          }
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
