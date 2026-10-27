@@ -1,0 +1,35 @@
+fn main() -> i32 {
+    var total: i32 = 0;
+    for i in 0..5 {
+        total = total + i;
+    }
+    print(total);
+
+    for i in 0..10 {
+        if i == 2 { continue; }
+        if i == 5 { break; }
+        print(i);
+    }
+
+    var outer: i32 = 0;
+    for i in 0..3 {
+        for j in 0..2 {
+            outer = outer + 1;
+        }
+    }
+    print(outer);
+
+    var countdown: i32 = 3;
+    while countdown > 0 {
+        print(countdown);
+        countdown = countdown - 1;
+    }
+
+    let limit: i32 = 4;
+    var sum: i32 = 0;
+    for value in limit..limit + 2 {
+        sum = sum + value;
+    }
+    print(sum);
+    return 0;
+}

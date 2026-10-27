@@ -1,0 +1,21 @@
+fn main() -> i32 {
+    let big: i64 = 4294967298;
+    let narrowed: i32 = big as i32;
+    print(narrowed);
+
+    let negative: i32 = -1;
+    let as_unsigned: u8 = negative as u8;
+    print(as_unsigned);
+
+    let wide: u8 = 255;
+    let widened: i64 = wide as i64;
+    print(widened);
+
+    let truncated: i8 = 200 as i8;
+    print(truncated);
+
+    let divisor: i64 = 0;
+    let quotient: i64 = 10 as i64;
+    print(quotient / divisor + 0);
+    return 0;
+}

@@ -1,0 +1,37 @@
+// Arrays, loops, and conversions.
+struct Task {
+    title: str,
+    done: bool,
+}
+
+fn count_done(tasks: [Task; 3]) -> i32 {
+    var done: i32 = 0;
+    for task in tasks {
+        if task.done {
+            done = done + 1;
+        }
+    }
+    return done;
+}
+
+fn main() -> i32 {
+    let tasks: [Task; 3] = [
+        Task("write the specification", true),
+        Task("add arrays", true),
+        Task("write the notes tool", false),
+    ];
+
+    var index: i32 = 0;
+    for task in tasks {
+        index = index + 1;
+        var mark: str = "[ ]";
+        if task.done {
+            mark = "[x]";
+        }
+        print(str_of_i64(index as i64) + ". " + mark + " " + task.title);
+    }
+
+    print(count_done(tasks));
+    print(tasks.len);
+    return 0;
+}

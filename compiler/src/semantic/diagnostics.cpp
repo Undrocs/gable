@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <ostream>
-#include <sstream>
 #include <string>
+#include <utility>
 
 namespace gable {
 namespace {
@@ -12,6 +12,8 @@ constexpr std::size_t kTabWidth = 4;
 /// Longest source line rendered in full. Longer lines are shown as a window
 /// around the diagnostic, so a single enormous line cannot flood the terminal.
 constexpr std::size_t kMaxRenderedLine = 160;
+constexpr std::size_t kContextBeforeCaret = 40;
+constexpr std::size_t kMaxHighlight = 80;
 
 /// Expands tabs so that carets align with the rendered source line.
 std::string expandTabs(std::string_view text, std::size_t caretByteOffset,
@@ -59,48 +61,54 @@ const char* severityName(Severity severity) {
   return "error";
 }
 
-DiagnosticEngine::DiagnosticEngine(const SourceFile& source) : source_(source) {}
+std::uint32_t Diagnostics::addFile(std::unique_ptr<SourceFile> file) {
+  files_.push_back(std::move(file));
+  return static_cast<std::uint32_t>(files_.size() - 1);
+}
 
-void DiagnosticEngine::error(SourceSpan span, std::string message) {
-  diagnostics_.push_back(Diagnostic{Severity::Error, span, std::move(message)});
+const SourceFile& Diagnostics::file(std::uint32_t index) const {
+  static const SourceFile unknown("<unknown>", std::string());
+  if (index >= files_.size()) {
+    return unknown;
+  }
+  return *files_[index];
+}
+
+void Diagnostics::error(std::uint32_t file, SourceSpan span, std::string message) {
+  diagnostics_.push_back(Diagnostic{Severity::Error, file, span, std::move(message)});
   ++errorCount_;
 }
 
-void DiagnosticEngine::warning(SourceSpan span, std::string message) {
-  diagnostics_.push_back(Diagnostic{Severity::Warning, span, std::move(message)});
+void Diagnostics::warning(std::uint32_t file, SourceSpan span, std::string message) {
+  diagnostics_.push_back(Diagnostic{Severity::Warning, file, span, std::move(message)});
 }
 
-void DiagnosticEngine::note(SourceSpan span, std::string message) {
-  diagnostics_.push_back(Diagnostic{Severity::Note, span, std::move(message)});
+void Diagnostics::note(std::uint32_t file, SourceSpan span, std::string message) {
+  diagnostics_.push_back(Diagnostic{Severity::Note, file, span, std::move(message)});
 }
 
-void DiagnosticEngine::render(std::ostream& out) const {
+void Diagnostics::render(std::ostream& out) const {
   for (const Diagnostic& diagnostic : diagnostics_) {
-    const LineColumn start = source_.lineColumn(diagnostic.span.begin);
-    out << source_.path() << ':' << start.line << ':' << start.column << ": "
+    const SourceFile& source = file(diagnostic.file);
+    const LineColumn start = source.lineColumn(diagnostic.span.begin);
+    out << source.path() << ':' << start.line << ':' << start.column << ": "
         << severityName(diagnostic.severity) << ": " << diagnostic.message << '\n';
 
-    const std::string_view line = source_.lineText(start.line);
-    if (line.empty() && start.line == 0) {
-      continue;
-    }
-
-    // Byte offset of the caret within the line.
-    const std::size_t lineBegin = source_.lineStartOffset(start.line);
-    std::size_t caretByte = diagnostic.span.begin >= lineBegin ? diagnostic.span.begin - lineBegin : 0;
+    const std::string_view line = source.lineText(start.line);
+    const std::size_t lineBegin = source.lineStartOffset(start.line);
+    std::size_t caretByte =
+        diagnostic.span.begin >= lineBegin ? diagnostic.span.begin - lineBegin : 0;
     if (caretByte > line.size()) {
       caretByte = line.size();
     }
 
-    std::size_t caretColumn = 0;
     std::string windowed(line);
     std::size_t windowedCaret = caretByte;
     std::string prefix;
     if (windowed.size() > kMaxRenderedLine) {
-      // Keep 40 bytes of leading context before the caret when possible, and
-      // move both window edges onto UTF-8 code point boundaries so the rendered
-      // line stays valid text.
-      std::size_t windowStart = caretByte > 40 ? caretByte - 40 : 0;
+      // Keep some context before the caret, and move both window edges onto
+      // UTF-8 code point boundaries so the rendered line stays valid text.
+      std::size_t windowStart = caretByte > kContextBeforeCaret ? caretByte - kContextBeforeCaret : 0;
       while (windowStart < line.size() &&
              (static_cast<unsigned char>(line[windowStart]) & 0xC0) == 0x80) {
         ++windowStart;
@@ -120,6 +128,8 @@ void DiagnosticEngine::render(std::ostream& out) const {
         windowedCaret = windowed.size();
       }
     }
+
+    std::size_t caretColumn = 0;
     const std::string rendered = prefix + expandTabs(windowed, windowedCaret, caretColumn);
     if (!prefix.empty()) {
       caretColumn += prefix.size();
@@ -129,11 +139,12 @@ void DiagnosticEngine::render(std::ostream& out) const {
     const std::string pad(gutter.size(), ' ');
     out << "  " << gutter << " | " << rendered << '\n';
     out << "  " << pad << " | " << std::string(caretColumn, ' ') << '^';
+
     const std::size_t spanLength = diagnostic.span.end > diagnostic.span.begin
                                        ? diagnostic.span.end - diagnostic.span.begin
                                        : 1;
     if (spanLength > 1) {
-      out << std::string(std::min<std::size_t>(spanLength - 1, 80), '~');
+      out << std::string(std::min<std::size_t>(spanLength - 1, kMaxHighlight), '~');
     }
     out << '\n';
   }

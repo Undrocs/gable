@@ -13,8 +13,15 @@ void gable_rt_trap(const char *message) {
   exit(GABLE_RT_TRAP_EXIT_CODE);
 }
 
-static _Noreturn void trap_divide_by_zero(void) {
+static GABLE_NORETURN void trap_divide_by_zero(void) {
   gable_rt_trap("integer division by zero");
+}
+
+void gable_rt_index_error(int64_t index, int64_t length) {
+  char message[128];
+  snprintf(message, sizeof(message), "index %lld is out of bounds for length %lld",
+           (long long)index, (long long)length);
+  gable_rt_trap(message);
 }
 
 int64_t gable_rt_div_i64(int64_t lhs, int64_t rhs) {

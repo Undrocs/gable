@@ -1,0 +1,14 @@
+fn next(label: str) -> i32 {
+    print(label);
+    return 1;
+}
+
+fn combine(a: i32, b: i32) -> i32 {
+    return a * 10 + b;
+}
+
+fn main() -> i32 {
+    print(combine(next("first"), next("second")));
+    print(next("third") - next("fourth"));
+    return 0;
+}

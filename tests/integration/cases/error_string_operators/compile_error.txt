@@ -1,0 +1,2 @@
+cannot be applied to values of type 'str'
+str_find or str_slice

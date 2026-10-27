@@ -1,0 +1,2 @@
+duplicate declaration of struct 'Point'
+previous declaration is here

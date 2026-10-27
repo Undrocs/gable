@@ -1,1 +1,2 @@
-requires 'bool' operands
+type mismatch in left operand of logical operator
+expected 'bool'

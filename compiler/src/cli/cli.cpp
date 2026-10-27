@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "gable/compiler.h"
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 #include "gable/toolchain.h"
@@ -17,7 +19,7 @@ namespace {
 namespace fs = std::filesystem;
 
 struct ParsedCommand {
-  enum class Action { Build, Run, Help, Version };
+  enum class Action { Build, Run, Check, Help, Version };
 
   Action action = Action::Help;
   std::string sourcePath;
@@ -36,6 +38,8 @@ int exitCodeFor(ToolchainStatus status) {
       return static_cast<int>(CliExitCode::Success);
     case ToolchainStatus::CompilationFailed:
       return static_cast<int>(CliExitCode::CompilationFailed);
+    case ToolchainStatus::InvalidOutput:
+      return static_cast<int>(CliExitCode::UsageError);
     case ToolchainStatus::InternalFailure:
       return static_cast<int>(CliExitCode::InternalFailure);
   }
@@ -58,6 +62,16 @@ std::string defaultOutputPath(const std::string& sourcePath) {
   fs::path path(sourcePath);
   path.replace_extension();
   return path.string();
+}
+
+/// True when the final path component has no extension: the case that receives
+/// the host's executable suffix. A path with an extension is used exactly as
+/// written, because the caller named the file deliberately.
+bool hasNoExtension(const std::string& path) {
+  const std::size_t separator = path.find_last_of("/\\");
+  const std::string name =
+      separator == std::string::npos ? path : path.substr(separator + 1);
+  return name.find('.') == std::string::npos;
 }
 
 bool isSuccess(ToolchainStatus status) { return status == ToolchainStatus::Success; }
@@ -83,8 +97,11 @@ CliExitCode executeRun(const ParsedCommand& parsed, std::ostream& out, std::ostr
     return static_cast<CliExitCode>(exitCodeFor(build.status));
   }
 
+  std::vector<std::string> command = {build.executablePath};
+  command.insert(command.end(), parsed.programArguments.begin(), parsed.programArguments.end());
+
   std::string processError;
-  const int exitCode = runProcessInheriting({build.executablePath}, processError);
+  const int exitCode = runProcessInheriting(command, processError);
   if (!processError.empty()) {
     err << "gable: error: " << processError << '\n';
   }
@@ -92,6 +109,23 @@ CliExitCode executeRun(const ParsedCommand& parsed, std::ostream& out, std::ostr
     return CliExitCode::InternalFailure;
   }
   return static_cast<CliExitCode>(exitCode);
+}
+
+/// Analyses `parsed.sourcePath` without producing any output file.
+CliExitCode executeCheck(const ParsedCommand& parsed, std::ostream& err) {
+  FrontendResult frontend = analyzeSourceFile(parsed.sourcePath);
+  if (frontend.hasErrors()) {
+    frontend.renderDiagnostics(err);
+    if (!frontend.hasInputError) {
+      err << "gable: " << frontend.diagnostics.errorCount() << " error(s) in "
+          << parsed.sourcePath << '\n';
+    }
+    return CliExitCode::CompilationFailed;
+  }
+  if (parsed.verbose) {
+    err << "gable: " << parsed.sourcePath << " is valid\n";
+  }
+  return CliExitCode::Success;
 }
 
 CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::ostream& err) {
@@ -105,27 +139,25 @@ CliExitCode executeBuild(const ParsedCommand& parsed, std::ostream& out, std::os
       const BuildOutput result = emitCTranslationUnit(parsed.sourcePath, options, out, err);
       return static_cast<CliExitCode>(exitCodeFor(result.status));
     }
-    std::ofstream file(parsed.emitCPath, std::ios::binary | std::ios::trunc);
-    if (!file) {
-      err << "gable: error: cannot open '" << parsed.emitCPath << "' for writing\n";
-      return CliExitCode::UsageError;
-    }
-    const BuildOutput result = emitCTranslationUnit(parsed.sourcePath, options, file, err);
-    if (!file) {
-      err << "gable: error: failed while writing '" << parsed.emitCPath << "'\n";
-      return CliExitCode::InternalFailure;
-    }
+    // The destination is validated by the toolchain only after the source has
+    // been analysed, so a bad -o/--emit-c path can never truncate a source file.
+    const BuildOutput result =
+        emitCTranslationUnitToFile(parsed.sourcePath, options, parsed.emitCPath, err);
     return static_cast<CliExitCode>(exitCodeFor(result.status));
   }
 
   options.outputPath = parsed.outputPath.empty() ? defaultOutputPath(parsed.sourcePath)
                                                  : parsed.outputPath;
-  if (fs::path(options.outputPath) == fs::path(parsed.sourcePath)) {
-    err << "gable: error: refusing to overwrite the source file '" << parsed.sourcePath
-        << "'; pass -o with a different path\n";
-    return CliExitCode::UsageError;
+  // `-o tool` produces `tool.exe` on Windows; the suffix is part of the path
+  // the toolchain writes and the CLI reports. A path that already has an
+  // extension is left alone: the caller named the file deliberately, and
+  // rewriting it would surprise anyone who asked for a specific name.
+  const std::string suffix = platform::executableSuffix();
+  std::error_code ignored;
+  if (!suffix.empty() && hasNoExtension(options.outputPath) &&
+      !fs::is_directory(options.outputPath, ignored)) {
+    options.outputPath += suffix;
   }
-
   const BuildOutput result = buildExecutable(parsed.sourcePath, options, err);
   if (!isSuccess(result.status)) {
     return static_cast<CliExitCode>(exitCodeFor(result.status));
@@ -157,6 +189,8 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
     parsed.action = ParsedCommand::Action::Build;
   } else if (command == "run") {
     parsed.action = ParsedCommand::Action::Run;
+  } else if (command == "check") {
+    parsed.action = ParsedCommand::Action::Check;
   } else if (!command.empty() && command[0] == '-') {
     err << "gable: error: unknown option '" << command << "'\n";
     return false;
@@ -239,9 +273,16 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
     err << "gable: error: --emit-c cannot be combined with 'run'\n";
     return false;
   }
-  if (parsed.action == ParsedCommand::Action::Run && !parsed.programArguments.empty()) {
-    err << "gable: error: Gable programs cannot read command-line arguments in v0.1; "
-           "'run' does not forward the values after '--'\n";
+  if (parsed.action != ParsedCommand::Action::Run && !parsed.programArguments.empty()) {
+    err << "gable: error: only 'run' forwards arguments after '--'\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Check && parsed.emitC) {
+    err << "gable: error: --emit-c produces output; use 'build' for that\n";
+    return false;
+  }
+  if (parsed.action == ParsedCommand::Action::Check && !parsed.outputPath.empty()) {
+    err << "gable: error: 'check' writes no output; remove -o\n";
     return false;
   }
   if (parsed.action == ParsedCommand::Action::Run && !parsed.outputPath.empty()) {
@@ -263,11 +304,14 @@ void printUsage(std::ostream& out) {
       << "Usage:\n"
       << "  gable --help | --version\n"
       << "  gable build <file.gable> [options]\n"
-      << "  gable run <file.gable> [options]\n"
+      << "  gable run <file.gable> [options] [-- program arguments]\n"
+      << "  gable check <file.gable>\n"
       << "\n"
       << "Commands:\n"
       << "  build    Compile a Gable source file to a native executable.\n"
       << "  run      Compile a Gable source file and execute it, forwarding its exit status.\n"
+      << "           Program arguments follow '--'.\n"
+      << "  check    Type check a Gable source file without writing any output.\n"
       << "\n"
       << "Options:\n"
       << "  -o <path>          Output path for 'build' (default: source name without extension).\n"
@@ -285,9 +329,11 @@ void printUsage(std::ostream& out) {
       << "  and 70 are also used for the compiler's own failures.\n"
       << "\n"
       << "Environment:\n"
-      << "  GABLE_CC               C compiler used by the backend (default: cc).\n"
+      << "  GABLE_CC               C compiler used by the backend (default: cc, or cl\n"
+      << "                         on Windows).\n"
       << "  GABLE_RUNTIME_INCLUDE  Directory containing gable/rt.h.\n"
-      << "  GABLE_RUNTIME_LIB      Path to libgable_rt.a.\n";
+      << "  GABLE_RUNTIME_LIB      Path to the runtime library (libgable_rt.a on POSIX\n"
+      << "                         hosts, gable_rt.lib on Windows).\n";
 }
 
 CliExitCode runCommandLine(const std::vector<std::string>& arguments, std::ostream& out,
@@ -305,6 +351,8 @@ CliExitCode runCommandLine(const std::vector<std::string>& arguments, std::ostre
     case ParsedCommand::Action::Version:
       printVersion(out);
       return CliExitCode::Success;
+    case ParsedCommand::Action::Check:
+      return executeCheck(parsed, err);
     case ParsedCommand::Action::Build:
       return executeBuild(parsed, out, err);
     case ParsedCommand::Action::Run:

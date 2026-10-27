@@ -1,40 +1,19 @@
 #include "gable/temporary.h"
 
-#include <cerrno>
-#include <cstdlib>
-#include <cstring>
 #include <filesystem>
+#include <string>
 #include <utility>
-#include <vector>
+
+#include "gable/platform.h"
 
 namespace gable {
-namespace {
-
-std::string temporaryRoot() {
-  const char* tmpdir = std::getenv("TMPDIR");
-  if (tmpdir != nullptr && tmpdir[0] != '\0') {
-    return tmpdir;
-  }
-  return "/tmp";
-}
-
-}  // namespace
 
 std::optional<TemporaryDirectory> TemporaryDirectory::create(std::string& error) {
-  std::string root = temporaryRoot();
-  if (!root.empty() && root.back() == '/') {
-    root.pop_back();
-  }
-  std::string pattern = root + "/gable-XXXXXX";
-
-  std::vector<char> buffer(pattern.begin(), pattern.end());
-  buffer.push_back('\0');
-
-  if (::mkdtemp(buffer.data()) == nullptr) {
-    error = std::string("cannot create a temporary directory: ") + std::strerror(errno);
+  const std::string path = platform::createTemporaryDirectory(error);
+  if (path.empty()) {
     return std::nullopt;
   }
-  return TemporaryDirectory(std::string(buffer.data()));
+  return TemporaryDirectory(path);
 }
 
 TemporaryDirectory::TemporaryDirectory(TemporaryDirectory&& other) noexcept

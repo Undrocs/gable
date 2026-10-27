@@ -28,7 +28,7 @@ jobs:
             cxx: g++
             build_type: Release
             sanitizers: "OFF"
-            werror: "OFF"
+            werror: "ON"
           - compiler: clang
             cc: clang
             cxx: clang++
@@ -76,8 +76,13 @@ jobs:
         run: |
           ./build/gable --version
           ./build/gable run examples/hello.gable
+          ./build/gable check examples/tasks.gable
+          ./build/gable run examples/tasks.gable | head -5
           ./build/gable build examples/primes.gable -o /tmp/primes
           /tmp/primes | head -5
+          ./build/gable run examples/args.gable -- Ada Grace | head -3
+          ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt add "smoke test"
+          ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt list | grep "smoke test"
 
   install:
     name: Install and use from a prefix
@@ -102,3 +107,70 @@ jobs:
           export PATH="$HOME/gable-install/bin:$PATH"
           gable --version
           gable run examples/fibonacci.gable | head -5
+
+  windows:
+    name: Windows ${{ matrix.toolchain }} ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: msvc
+            build_type: Debug
+          - toolchain: msvc
+            build_type: Release
+    steps:
+      - uses: actions/checkout@v4
+
+      # `gable build` invokes the host C compiler, which on Windows is the one
+      # from the Visual Studio environment; this puts cl.exe on PATH.
+      - name: Set up the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # The configure step reports its own failure as an annotation so that a
+      # failure is visible on the pull request without opening the raw log.
+      # Ninja plus the MSVC environment is used rather than the Visual Studio
+      # generator: naming a generator couples the job to one Visual Studio
+      # version, and the runner image changes that version over time.
+      - name: Configure
+        shell: pwsh
+        run: |
+          $output = cmake -S . -B build `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DBUILD_TESTING=ON 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            $message = $output -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=cmake configure failed::$message"
+            exit 1
+          }
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $output = ctest --test-dir build --output-on-failure 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            $tail = $output.Substring([Math]::Max(0, $output.Length - 6000))
+            $message = $tail -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=ctest failed::$message"
+            exit 1
+          }
+
+      - name: Smoke test the CLI
+        shell: pwsh
+        run: |
+          ./build/gable.exe --version
+          ./build/gable.exe run examples/hello.gable
+          ./build/gable.exe check examples/tasks.gable
+          ./build/gable.exe build examples/primes.gable -o primes.exe
+          ./primes.exe | Select-Object -First 5
+          ./build/gable.exe run examples/args.gable -- Ada Grace | Select-Object -First 3
+          ./build/gable.exe run tools/notes/notes.gable -- --file notes.txt add "smoke test"
+          ./build/gable.exe run tools/notes/notes.gable -- --file notes.txt list

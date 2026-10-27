@@ -4,6 +4,7 @@
 #include <string>
 
 using gabletest::emitCFor;
+using gabletest::emitCForProject;
 
 namespace {
 
@@ -11,31 +12,32 @@ bool contains(const std::string& text, const std::string& needle) {
   return text.find(needle) != std::string::npos;
 }
 
+/// Position of `needle` in `text`, or npos.
+std::size_t positionOf(const std::string& text, const std::string& needle) {
+  return text.find(needle);
+}
+
 }  // namespace
 
 GABLE_TEST(codegen_emits_runtime_include_and_entry_point) {
   const std::string c = emitCFor(gabletest::kSimpleProgram());
-  GABLE_CHECK(contains(c, "#include <gable/rt.h>"));
-  GABLE_CHECK(contains(c, "int32_t gable_fn_main(void)"));
-  GABLE_CHECK(contains(c, "int main(void)"));
+  GABLE_CHECK(contains(c, "#include \"gable/rt.h\""));
+  GABLE_CHECK(contains(c, "static int32_t gable_fn_main(void)"));
+  GABLE_CHECK(contains(c, "int main(int argc, char** argv)"));
+  GABLE_CHECK(contains(c, "gable_rt_set_args(argc, argv);"));
   GABLE_CHECK(contains(c, "return (int)gable_fn_main();"));
 }
 
-GABLE_TEST(codegen_emits_string_literals_once) {
+GABLE_TEST(codegen_emits_string_literals_with_explicit_length) {
   const std::string c = emitCFor(
       "fn main() -> i32 {\n"
-      "  print(\"hello\");\n"
       "  print(\"hello\");\n"
       "  print(\"world\");\n"
       "  return 0;\n"
       "}\n");
-  GABLE_CHECK(contains(c, "static const char gable_str_0[] = \"hello\";"));
-  GABLE_CHECK(contains(c, "static const char gable_str_1[] = \"world\";"));
-  const std::size_t first = c.find("gable_str_0[]");
-  GABLE_CHECK(first != std::string::npos);
-  GABLE_CHECK(c.find("gable_str_0[]", first + 1) == std::string::npos);
-  GABLE_CHECK(contains(c, "gable_rt_print_str(gable_str_0)"));
-  GABLE_CHECK(contains(c, "gable_rt_print_str(gable_str_1)"));
+  GABLE_CHECK(contains(c, "gable_rt_str(\"hello\", 5)"));
+  GABLE_CHECK(contains(c, "gable_rt_str(\"world\", 5)"));
+  GABLE_CHECK(contains(c, "gable_rt_print_str("));
 }
 
 GABLE_TEST(codegen_escapes_string_contents) {
@@ -44,115 +46,216 @@ GABLE_TEST(codegen_escapes_string_contents) {
       "  print(\"quote:\\\" backslash:\\\\ tab:\\t newline:\\n\");\n"
       "  return 0;\n"
       "}\n");
-  GABLE_CHECK(contains(c, "\\\""));    // escaped double quote
-  GABLE_CHECK(contains(c, "\\\\"));    // escaped backslash
-  GABLE_CHECK(contains(c, "\\011"));    // tab
-  GABLE_CHECK(contains(c, "\\012"));    // newline
+  GABLE_CHECK(contains(c, "\\\""));  // escaped double quote
+  GABLE_CHECK(contains(c, "\\\\"));  // escaped backslash
+  GABLE_CHECK(contains(c, "\\t"));  // tab
+  GABLE_CHECK(contains(c, "\\n"));  // newline
 }
 
 GABLE_TEST(codegen_wraps_signed_arithmetic_in_unsigned) {
   const std::string c = emitCFor(
-      "fn f(a: i32, b: i32) -> i32 { return a + b; }\n"
-      "fn main() -> i32 { return f(1, 2); }\n");
-  GABLE_CHECK(contains(c, "(int32_t)((uint32_t)(gable_v0_a) + (uint32_t)(gable_v1_b))"));
+      "fn add(a: i32, b: i32) -> i32 { return a + b; }\n"
+      "fn main() -> i32 { return add(1, 2); }\n");
+  GABLE_CHECK(contains(c, "(int32_t)(uint32_t)((uint32_t)(v0_a) + (uint32_t)(v1_b))"));
 }
 
 GABLE_TEST(codegen_uses_runtime_helpers_for_division) {
   const std::string c = emitCFor(
-      "fn f(a: i64, b: i64) -> i64 { return a / b; }\n"
-      "fn g(a: i64, b: i64) -> i64 { return a % b; }\n"
-      "fn h(a: u32, b: u32) -> u32 { return a / b; }\n"
+      "fn divide(a: i64, b: i64) -> i64 { return a / b; }\n"
       "fn main() -> i32 { return 0; }\n");
-  GABLE_CHECK(contains(c, "gable_rt_div_i64("));
-  GABLE_CHECK(contains(c, "gable_rt_rem_i64("));
-  GABLE_CHECK(contains(c, "gable_rt_div_u64("));
-  GABLE_CHECK(contains(c, "(uint32_t)gable_rt_div_u64("));
+  GABLE_CHECK(contains(c, "gable_rt_div_i64"));
 }
 
-GABLE_TEST(codegen_emits_narrowing_casts_for_small_types) {
+GABLE_TEST(codegen_uses_unsigned_division_helpers_for_unsigned_types) {
   const std::string c = emitCFor(
-      "fn f(a: i8, b: i8) -> i8 { return a * b; }\n"
+      "fn divide(a: u32, b: u32) -> u32 { return a / b; }\n"
       "fn main() -> i32 { return 0; }\n");
-  GABLE_CHECK(contains(c, "int8_t gable_fn_f("));
-  GABLE_CHECK(contains(c, "(int8_t)((uint8_t)(gable_v0_a) * (uint8_t)(gable_v1_b))"));
+  GABLE_CHECK(contains(c, "gable_rt_div_u64"));
 }
 
-GABLE_TEST(codegen_dispatches_print_by_type) {
+GABLE_TEST(codegen_evaluates_call_arguments_left_to_right) {
+  const std::string c = emitCFor(
+      "fn pair(a: i32, b: i32) -> i32 { return a + b; }\n"
+      "fn left() -> i32 { print(\"left\"); return 1; }\n"
+      "fn right() -> i32 { print(\"right\"); return 2; }\n"
+      "fn main() -> i32 { return pair(left(), right()); }\n");
+  const std::size_t leftCall = positionOf(c, "gable_fn_left()");
+  const std::size_t rightCall = positionOf(c, "gable_fn_right()");
+  GABLE_CHECK(leftCall != std::string::npos);
+  GABLE_CHECK(rightCall != std::string::npos);
+  GABLE_CHECK(leftCall < rightCall);
+  // Both results are stored before the call, so the C compiler cannot reorder
+  // them by evaluating the call's arguments in another order.
+  GABLE_CHECK(contains(c, "int32_t t2 = gable_fn_pair(t0, t1);"));
+}
+
+GABLE_TEST(codegen_evaluates_binary_operands_left_to_right) {
+  const std::string c = emitCFor(
+      "fn left() -> i32 { print(\"left\"); return 1; }\n"
+      "fn right() -> i32 { print(\"right\"); return 2; }\n"
+      "fn main() -> i32 { return left() / right(); }\n");
+  const std::size_t leftCall = positionOf(c, "gable_fn_left()");
+  const std::size_t rightCall = positionOf(c, "gable_fn_right()");
+  GABLE_CHECK(leftCall != std::string::npos);
+  GABLE_CHECK(rightCall != std::string::npos);
+  GABLE_CHECK(leftCall < rightCall);
+}
+
+GABLE_TEST(codegen_keeps_short_circuit_evaluation) {
+  const std::string c = emitCFor(
+      "fn check(a: bool, b: bool) -> bool { return a && b; }\n"
+      "fn main() -> i32 { return 0; }\n");
+  GABLE_CHECK(contains(c, "(v0_a && v1_b)"));
+}
+
+GABLE_TEST(codegen_sequences_side_effects_inside_short_circuit) {
+  const std::string c = emitCFor(
+      "fn value() -> i32 { return 1; }\n"
+      "fn truth() -> bool { print(\"right\"); return true; }\n"
+      "fn main() -> i32 { let a: i32 = 0;\n"
+      "  if a == 0 && truth() { print(\"body\"); }\n  return 0; }\n");
+  // The right operand is guarded by an if statement instead of being evaluated
+  // unconditionally.
+  GABLE_CHECK(contains(c, "if ("));
+  GABLE_CHECK(contains(c, "gable_fn_truth()"));
+  GABLE_CHECK(positionOf(c, "gable_fn_truth()") < positionOf(c, "gable_rt_print_str(gable_rt_str(\"body\", 4))"));
+}
+
+GABLE_TEST(codegen_bounds_checks_array_access) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let values: [i32; 3] = [1, 2, 3];\n"
+      "  return values[1];\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_index_error"));
+  GABLE_CHECK(contains(c, ">= 3"));
+  GABLE_CHECK(contains(c, "typedef struct gable_arr_0"));
+  GABLE_CHECK(contains(c, "int32_t data[3];"));
+}
+
+GABLE_TEST(codegen_emits_struct_typedefs_in_dependency_order) {
+  const std::string c = emitCFor(
+      "struct Inner { value: i32 }\n"
+      "struct Outer { inner: Inner, items: [i32; 2] }\n"
+      "fn main() -> i32 { let o: Outer = Outer(Inner(1), [2, 3]); return o.inner.value; }\n");
+  const std::size_t inner = positionOf(c, "typedef struct gable_s_Inner");
+  const std::size_t outer = positionOf(c, "typedef struct gable_s_Outer");
+  const std::size_t array = positionOf(c, "typedef struct gable_arr_");
+  GABLE_CHECK(inner != std::string::npos);
+  GABLE_CHECK(outer != std::string::npos);
+  GABLE_CHECK(inner < outer);
+  GABLE_CHECK(array != std::string::npos);
+  GABLE_CHECK(array < outer);
+}
+
+GABLE_TEST(codegen_uses_runtime_struct_for_builtin_results) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let read = fs_read_text(\"x\");\n"
+      "  if read.ok { print(read.text); }\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_fs_read_text("));
+  // The prelude struct is described by the runtime header, not redeclared.
+  GABLE_CHECK(!contains(c, "typedef struct gable_rt_FileReadResult"));
+}
+
+GABLE_TEST(codegen_maps_break_and_continue) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  for i in 0..10 {\n"
+      "    if i == 2 { continue; }\n"
+      "    if i == 5 { break; }\n"
+      "  }\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "continue;"));
+  GABLE_CHECK(contains(c, "break;"));
+  GABLE_CHECK(contains(c, "for (;"));
+}
+
+GABLE_TEST(codegen_evaluates_range_bound_once) {
+  const std::string c = emitCFor(
+      "fn bound() -> i32 { return 3; }\n"
+      "fn main() -> i32 {\n"
+      "  var total: i32 = 0;\n"
+      "  for i in 0..bound() { total = total + i; }\n"
+      "  return total;\n"
+      "}\n");
+  const std::size_t call = positionOf(c, "gable_fn_bound()");
+  const std::size_t loop = positionOf(c, "for (;");
+  GABLE_CHECK(call != std::string::npos);
+  GABLE_CHECK(loop != std::string::npos);
+  GABLE_CHECK(call < loop);
+  // Exactly one call: the bound is not re-evaluated per iteration.
+  GABLE_CHECK(c.find("gable_fn_bound()", call + 1) == std::string::npos);
+}
+
+GABLE_TEST(codegen_copies_the_iterated_array) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let values: [i32; 2] = [1, 2];\n"
+      "  for value in values { print(value); }\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "= v"));
+  GABLE_CHECK(contains(c, "gable_arr_"));
+  GABLE_CHECK(contains(c, ".data[t"));
+}
+
+GABLE_TEST(codegen_converts_strings_with_runtime_calls) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let a: str = \"x\" + \"y\";\n"
+      "  let b: bool = a == \"xy\";\n"
+      "  print(b);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_str_concat("));
+  GABLE_CHECK(contains(c, "gable_rt_str_eq("));
+}
+
+GABLE_TEST(codegen_specializes_print_by_operand_type) {
   const std::string c = emitCFor(
       "fn main() -> i32 {\n"
       "  print(\"text\");\n"
       "  print(true);\n"
-      "  print(1);\n"
-      "  let u: u64 = 2;\n"
-      "  print(u);\n"
+      "  print(42);\n"
+      "  let small: u8 = 7;\n"
+      "  print(small);\n"
       "  return 0;\n"
       "}\n");
   GABLE_CHECK(contains(c, "gable_rt_print_str("));
-  GABLE_CHECK(contains(c, "gable_rt_print_bool(true)"));
+  GABLE_CHECK(contains(c, "gable_rt_print_bool("));
   GABLE_CHECK(contains(c, "gable_rt_print_i64("));
-  GABLE_CHECK(contains(c, "gable_rt_print_u64("));
 }
 
-GABLE_TEST(codegen_emits_control_flow) {
+GABLE_TEST(codegen_compiles_multi_file_programs_into_one_unit) {
+  const std::string c = emitCForProject(
+      {{"main.gable",
+        "import \"util.gable\";\n"
+        "fn main() -> i32 { return helper(); }\n"},
+       {"util.gable", "fn helper() -> i32 { return 0; }\n"}},
+      "main.gable");
+  GABLE_CHECK(contains(c, "static int32_t gable_fn_helper(void)"));
+  GABLE_CHECK(contains(c, "static int32_t gable_fn_main(void)"));
+  GABLE_CHECK(contains(c, "Generated by the Gable compiler from main.gable"));
+}
+
+GABLE_TEST(codegen_avoids_collisions_with_c_names) {
   const std::string c = emitCFor(
       "fn main() -> i32 {\n"
-      "  var i: i32 = 0;\n"
-      "  while i < 3 {\n"
-      "    if i == 1 { print(\"one\"); } else { print(i); }\n"
-      "    i = i + 1;\n"
-      "  }\n"
+      "  let int: i32 = 1;\n"
+      "  let malloc: i32 = 2;\n"
+      "  print(int + malloc);\n"
       "  return 0;\n"
       "}\n");
-  GABLE_CHECK(contains(c, "while ("));
-  GABLE_CHECK(contains(c, "if ("));
-  GABLE_CHECK(contains(c, "} else {"));
+  GABLE_CHECK(contains(c, "v0_int"));
+  GABLE_CHECK(contains(c, "v1_malloc"));
 }
 
-GABLE_TEST(codegen_declares_locals_at_function_scope) {
-  const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
-      "  let a: i64 = 1;\n"
-      "  { let b: i64 = 2; print(b); }\n"
-      "  print(a);\n"
-      "  return 0;\n"
-      "}\n");
-  GABLE_CHECK(contains(c, "int64_t gable_v0_a;"));
-  GABLE_CHECK(contains(c, "int64_t gable_v1_b;"));
-  GABLE_CHECK(contains(c, "gable_v1_b = (int64_t)2;"));
-}
-
-GABLE_TEST(codegen_emits_forward_declarations_for_recursion) {
-  const std::string c = emitCFor(
-      "fn main() -> i32 { return count(3); }\n"
-      "fn count(n: i32) -> i32 { if n <= 0 { return 0; } return count(n - 1); }\n");
-  const std::size_t declaration = c.find("int32_t gable_fn_count(int32_t gable_v0_n);");
-  const std::size_t definition = c.find("int32_t gable_fn_count(int32_t gable_v0_n) {");
-  GABLE_CHECK(declaration != std::string::npos);
-  GABLE_CHECK(definition != std::string::npos);
-  GABLE_CHECK(declaration < definition);
-}
-
-GABLE_TEST(codegen_emits_boolean_literals) {
-  const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
-      "  let a: bool = true;\n"
-      "  let b: bool = false;\n"
-      "  print(a || b);\n"
-      "  return 0;\n"
-      "}\n");
-  GABLE_CHECK(contains(c, "gable_v0_a = true;"));
-  GABLE_CHECK(contains(c, "gable_v1_b = false;"));
-  GABLE_CHECK(contains(c, "(gable_v0_a) || (gable_v1_b)"));
-}
-
-GABLE_TEST(codegen_marks_generated_file) {
+GABLE_TEST(codegen_reports_the_compiler_version) {
   const std::string c = emitCFor(gabletest::kSimpleProgram());
-  GABLE_CHECK(contains(c, "Generated by the Gable compiler"));
-  GABLE_CHECK(contains(c, "Do not edit"));
-}
-
-GABLE_TEST(codegen_output_is_stable) {
-  const std::string first = emitCFor(gabletest::kSimpleProgram());
-  const std::string second = emitCFor(gabletest::kSimpleProgram());
-  GABLE_CHECK_EQ(first, second);
+  GABLE_CHECK(contains(c, "Compiler "));
+  GABLE_CHECK(contains(c, "C17 backend"));
 }

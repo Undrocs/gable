@@ -1,2 +1,2 @@
 have different types
-does not convert between integer types implicitly
+never converts between types implicitly

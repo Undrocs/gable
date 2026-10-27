@@ -1,0 +1,2 @@
+cannot import 'absent.gable'
+resolved relative to the importing file

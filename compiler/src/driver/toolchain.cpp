@@ -1,16 +1,20 @@
 #include "gable/toolchain.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
 
 #include "gable/c_backend.h"
 #include "gable/compiler.h"
-#include "gable/paths.h"
+#include "gable/output.h"
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 #include "gable/version.h"
@@ -28,13 +32,22 @@ std::string environmentOr(const char* name, const std::string& fallback) {
   return fallback;
 }
 
+/// Static library file name used by the C toolchain on this host.
+const char* runtimeLibraryFileName() {
+#if defined(_WIN32)
+  return "gable_rt.lib";
+#else
+  return "libgable_rt.a";
+#endif
+}
+
 struct RuntimePaths {
   std::string includeDir;
   std::string libraryPath;
 };
 
 /// Runtime directories next to the running binary: <prefix>/bin/gable implies
-/// <prefix>/include/gable/rt.h and <prefix>/lib/libgable_rt.a. This keeps an
+/// <prefix>/include/gable/rt.h and <prefix>/lib/<runtime library>. This keeps an
 /// installed compiler working when it is installed with a prefix that differs
 /// from the one chosen at configure time.
 struct ExecutableRelativePaths {
@@ -44,13 +57,13 @@ struct ExecutableRelativePaths {
 
 ExecutableRelativePaths executableRelativeRuntime() {
   ExecutableRelativePaths paths;
-  const std::string executable = executablePath();
+  const std::string executable = platform::executablePath();
   if (executable.empty()) {
     return paths;
   }
   const fs::path prefix = fs::path(executable).parent_path().parent_path();
   paths.includeDir = (prefix / "include").string();
-  paths.libraryPath = (prefix / "lib" / "libgable_rt.a").string();
+  paths.libraryPath = (prefix / "lib" / runtimeLibraryFileName()).string();
   return paths;
 }
 
@@ -114,15 +127,71 @@ bool resolveRuntimePaths(const BuildOptions& options, RuntimePaths& paths, std::
     return false;
   }
   if (libraryPath.empty() || !fs::is_regular_file(libraryPath)) {
-    error =
-        "cannot locate the Gable runtime library (libgable_rt.a). Set GABLE_RUNTIME_LIB to the "
-        "library file.";
+    error = std::string("cannot locate the Gable runtime library (") +
+            runtimeLibraryFileName() +
+            "). Set GABLE_RUNTIME_LIB to the library file.";
     return false;
   }
 
   paths.includeDir = includeDir;
   paths.libraryPath = libraryPath;
   return true;
+}
+
+/// How the C compiler on this host spells its options. MSVC and clang-cl use
+/// slash options and a different output syntax; GCC and Clang on POSIX accept
+/// the traditional dash options.
+enum class CCompilerFamily { GnuStyle, MsvcStyle };
+
+CCompilerFamily familyOf(const std::string& compiler) {
+  std::string name = fs::path(compiler).filename().string();
+  std::transform(name.begin(), name.end(), name.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (name == "cl" || name == "cl.exe" || name == "clang-cl" || name == "clang-cl.exe") {
+    return CCompilerFamily::MsvcStyle;
+  }
+  return CCompilerFamily::GnuStyle;
+}
+
+std::vector<std::string> compilerArguments(CCompilerFamily family, const std::string& compiler,
+                                          const std::string& cPath, const std::string& outputPath,
+                                          const std::string& includeDir,
+                                          const std::string& libraryPath, int optimizationLevel) {
+  if (family == CCompilerFamily::MsvcStyle) {
+    const std::string level = optimizationLevel >= 2 ? "/O2"
+                              : optimizationLevel == 1 ? "/O1"
+                                                       : "/Od";
+    return {
+        compiler,
+        "/nologo",
+        "/std:c17",
+        level,
+        "/W4",
+        // The runtime is a static library built against the static CRT
+        // (CMakeLists.txt sets MultiThreaded), so the program must not import
+        // the DLL runtime; the two flavours cannot be mixed.
+        "/MT",
+        "/I" + includeDir,
+        // Keep the object file next to the generated C, inside the temporary
+        // directory, instead of in the current working directory.
+        "/Fo" + cPath + ".obj",
+        cPath,
+        libraryPath,
+        "/Fe" + outputPath,
+    };
+  }
+  return {
+      compiler,
+      "-std=c17",
+      "-O" + std::to_string(optimizationLevel),
+      "-Wall",
+      "-Wextra",
+      "-I" + includeDir,
+      cPath,
+      libraryPath,
+      "-o",
+      outputPath,
+  };
 }
 
 /// Runs the frontend, writing diagnostics on failure.
@@ -149,7 +218,7 @@ std::string resolveCCompiler(const BuildOptions& options) {
   if (!options.cCompiler.empty()) {
     return options.cCompiler;
   }
-  return environmentOr("GABLE_CC", "cc");
+  return environmentOr("GABLE_CC", platform::defaultCCompiler());
 }
 
 BuildOutput emitCTranslationUnit(const std::string& sourcePath, const BuildOptions& options,
@@ -192,12 +261,31 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
     return output;
   }
 
+  // Never write over a file that this compilation read.
+  const std::string alias = findInputAlias(options.outputPath, frontend.inputPaths);
+  if (!alias.empty()) {
+    diagnostics << "gable: error: refusing to write '" << options.outputPath
+                << "' because it is an input file of this compilation ('" << alias << "')\n";
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = "output path aliases an input file";
+    return output;
+  }
+
   RuntimePaths runtime;
   std::string runtimeError;
   if (!resolveRuntimePaths(options, runtime, runtimeError)) {
     diagnostics << "gable: error: " << runtimeError << '\n';
     output.status = ToolchainStatus::InternalFailure;
     output.message = runtimeError;
+    return output;
+  }
+
+  std::string atomicError;
+  auto target = AtomicOutputFile::create(options.outputPath, atomicError);
+  if (!target) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = atomicError;
     return output;
   }
 
@@ -230,18 +318,9 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
   }
 
   const std::string cCompiler = resolveCCompiler(options);
-  std::vector<std::string> argv = {
-      cCompiler,
-      "-std=c17",
-      "-O" + std::to_string(options.optimizationLevel),
-      "-Wall",
-      "-Wextra",
-      "-I" + runtime.includeDir,
-      cPath,
-      runtime.libraryPath,
-      "-o",
-      options.outputPath,
-  };
+  const std::vector<std::string> argv =
+      compilerArguments(familyOf(cCompiler), cCompiler, cPath, target->temporaryPath(),
+                        runtime.includeDir, runtime.libraryPath, options.optimizationLevel);
 
   if (options.verbose) {
     diagnostics << "gable: running:";
@@ -279,6 +358,13 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
     return output;
   }
 
+  if (!target->commit(atomicError)) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = atomicError;
+    return output;
+  }
+
   if (options.keepTemporaryFiles) {
     temporary->keep();
     diagnostics << "gable: generated C retained at " << cPath << '\n';
@@ -286,6 +372,58 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
 
   output.status = ToolchainStatus::Success;
   output.executablePath = options.outputPath;
+  return output;
+}
+
+BuildOutput emitCTranslationUnitToFile(const std::string& sourcePath, const BuildOptions& options,
+                                       const std::string& targetPath, std::ostream& diagnostics) {
+  BuildOutput output;
+  (void)options;
+
+  FrontendResult frontend;
+  output.status = runFrontend(sourcePath, diagnostics, frontend, output.message);
+  if (output.status != ToolchainStatus::Success) {
+    return output;
+  }
+
+  // Check the destination before a single byte is written: --emit-c must not be
+  // able to truncate the file it is compiling.
+  const std::string alias = findInputAlias(targetPath, frontend.inputPaths);
+  if (!alias.empty()) {
+    diagnostics << "gable: error: refusing to write '" << targetPath
+                << "' because it is an input file of this compilation ('" << alias << "')\n";
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = "output path aliases an input file";
+    return output;
+  }
+
+  std::ostringstream generated;
+  const CBackendOptions backendOptions{sourcePath, versionString()};
+  generated << emitC(*frontend.module, backendOptions);
+
+  std::string atomicError;
+  auto target = AtomicOutputFile::create(targetPath, atomicError);
+  if (!target) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InvalidOutput;
+    output.message = atomicError;
+    return output;
+  }
+  if (!target->write(generated.str(), atomicError)) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InternalFailure;
+    output.message = atomicError;
+    return output;
+  }
+  if (!target->commit(atomicError)) {
+    diagnostics << "gable: error: " << atomicError << '\n';
+    output.status = ToolchainStatus::InternalFailure;
+    output.message = atomicError;
+    return output;
+  }
+
+  output.status = ToolchainStatus::Success;
+  output.executablePath = targetPath;
   return output;
 }
 

@@ -2,6 +2,7 @@
 #include "test_helpers.h"
 
 using gabletest::analyze;
+using gabletest::analyzeProject;
 using gabletest::mentions;
 
 namespace {
@@ -126,13 +127,13 @@ GABLE_TEST(sema_rejects_non_boolean_condition) {
 GABLE_TEST(sema_rejects_logical_operands_of_wrong_type) {
   const auto analysis = analyze(inMain("  let a: i32 = 1;\n  let b: bool = a && true;\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(mentions(analysis, "requires 'bool' operands"));
+  GABLE_CHECK(mentions(analysis, "type mismatch in left operand of logical operator"));
 }
 
-GABLE_TEST(sema_rejects_string_comparison) {
-  const auto analysis = analyze(inMain("  let a: bool = \"x\" == \"y\";\n  return 0;"));
+GABLE_TEST(sema_rejects_unsupported_string_operators) {
+  const auto analysis = analyze(inMain("  let a: bool = \"x\" < \"y\";\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(mentions(analysis, "string comparison is not available"));
+  GABLE_CHECK(mentions(analysis, "cannot be applied to values of type 'str'"));
 }
 
 GABLE_TEST(sema_rejects_unary_minus_on_bool) {
@@ -314,11 +315,11 @@ GABLE_TEST(sema_requires_main_to_return_i32) {
 GABLE_TEST(sema_reserves_print) {
   const auto function = analyze("fn print(x: i32) { return; }\nfn main() -> i32 { return 0; }\n");
   GABLE_CHECK(!function.ok());
-  GABLE_CHECK(mentions(function, "reserved for the built-in print function"));
+  GABLE_CHECK(mentions(function, "reserved for a built-in function"));
 
   const auto variable = analyze(inMain("  let print: i32 = 1;\n  return 0;"));
   GABLE_CHECK(!variable.ok());
-  GABLE_CHECK(mentions(variable, "reserved for the built-in print function"));
+  GABLE_CHECK(mentions(variable, "reserved for a built-in function"));
 }
 
 GABLE_TEST(sema_checks_print_arity_and_types) {
@@ -399,4 +400,393 @@ GABLE_TEST(sema_diagnostics_include_source_context) {
   const auto analysis = analyze(inMain("  return missing;"));
   GABLE_CHECK(analysis.rendered.find("test.gable:2:10: error:") != std::string::npos);
   GABLE_CHECK(analysis.rendered.find("return missing;") != std::string::npos);
+}
+
+// --------------------------------------------------------------------------
+// v0.2: structs
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_struct_declaration_construction_and_field_access) {
+  const auto analysis = analyze(
+      "struct Point { x: i32, y: i32 }\n"
+      "fn main() -> i32 {\n"
+      "  var p: Point = Point(1, 2);\n"
+      "  p.x = p.x + p.y;\n"
+      "  print(p.x);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_struct_with_wrong_field_count) {
+  const auto analysis = analyze(
+      "struct Point { x: i32, y: i32 }\n"
+      "fn main() -> i32 { let p: Point = Point(1); return p.x; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "has 2 field(s) but 1 value(s) were given"));
+}
+
+GABLE_TEST(sema_rejects_struct_field_type_mismatch) {
+  const auto analysis = analyze(
+      "struct Point { x: i32, y: i32 }\n"
+      "fn main() -> i32 { let p: Point = Point(true, 2); return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "field 'x' of struct 'Point' has type 'i32'"));
+}
+
+GABLE_TEST(sema_rejects_unknown_field) {
+  const auto analysis = analyze(
+      "struct Point { x: i32 }\n"
+      "fn main() -> i32 { let p: Point = Point(1); return p.z; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "struct 'Point' has no field 'z'"));
+  GABLE_CHECK(mentions(analysis, "available fields: x: i32"));
+}
+
+GABLE_TEST(sema_rejects_duplicate_field) {
+  const auto analysis = analyze("struct P { x: i32, x: i32 }\nfn main() -> i32 { return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "duplicate field 'x' in struct 'P'"));
+}
+
+GABLE_TEST(sema_rejects_struct_that_contains_itself) {
+  const auto analysis =
+      analyze("struct Node { value: i32, next: Node }\nfn main() -> i32 { return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "contains itself by value"));
+}
+
+GABLE_TEST(sema_rejects_struct_field_of_void_type) {
+  const auto analysis = analyze("struct Empty { x: void }\nfn main() -> i32 { return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot have type 'void'"));
+}
+
+GABLE_TEST(sema_accepts_nested_structs) {
+  const auto analysis = analyze(
+      "struct Inner { value: i32 }\n"
+      "struct Outer { inner: Inner, flag: bool }\n"
+      "fn main() -> i32 {\n"
+      "  let o: Outer = Outer(Inner(7), true);\n"
+      "  print(o.inner.value);\n"
+      "  print(o.flag);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_printing_a_struct) {
+  const auto analysis = analyze(
+      "struct Point { x: i32 }\n"
+      "fn main() -> i32 { let p: Point = Point(1); print(p); return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot print a value of type 'Point'"));
+}
+
+GABLE_TEST(sema_rejects_value_struct_comparison) {
+  const auto analysis = analyze(
+      "struct Point { x: i32 }\n"
+      "fn main() -> i32 { let a: Point = Point(1); let b: Point = Point(1);\n"
+      "  if a == b { return 1; } return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot be applied to values of type 'Point'"));
+}
+
+// --------------------------------------------------------------------------
+// v0.2: arrays
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_fixed_size_arrays) {
+  const auto analysis = analyze(
+      "fn main() -> i32 {\n"
+      "  var values: [i32; 3] = [1, 2, 3];\n"
+      "  values[0] = values[1] + values[2];\n"
+      "  print(values[0]);\n"
+      "  print(values.len);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_array_literal_without_type) {
+  const auto analysis = analyze(inMain("  let values = [1, 2, 3];\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot infer the type of an array literal"));
+}
+
+GABLE_TEST(sema_rejects_array_literal_with_wrong_length) {
+  const auto analysis = analyze(inMain("  let values: [i32; 4] = [1, 2, 3];\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "needs 4 element(s), found 3"));
+}
+
+GABLE_TEST(sema_rejects_array_literal_element_type) {
+  const auto analysis = analyze(inMain("  let values: [i32; 2] = [1, true];\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "array element"));
+}
+
+GABLE_TEST(sema_rejects_indexing_a_non_array) {
+  const auto analysis = analyze(inMain("  let text: str = \"abc\";\n  print(text[0]);\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "only arrays can be indexed"));
+  GABLE_CHECK(mentions(analysis, "str_slice"));
+}
+
+GABLE_TEST(sema_rejects_non_integer_index) {
+  const auto analysis = analyze(inMain("  let values: [i32; 2] = [1, 2];\n  print(values[true]);\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "array index must be an integer"));
+}
+
+GABLE_TEST(sema_accepts_nested_arrays_and_array_fields) {
+  const auto analysis = analyze(
+      "struct Grid { cells: [i32; 4] }\n"
+      "fn main() -> i32 {\n"
+      "  let rows: [[i32; 2]; 2] = [[1, 2], [3, 4]];\n"
+      "  let grid: Grid = Grid([1, 2, 3, 4]);\n"
+      "  print(rows[1][0]);\n"
+      "  print(grid.cells.len);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_zero_length_array) {
+  const auto analysis = analyze(inMain("  let values: [i32; 0] = [1];\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "array length must be greater than zero"));
+}
+
+// --------------------------------------------------------------------------
+// v0.2: strings
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_string_concatenation_equality_and_length) {
+  const auto analysis = analyze(inMain(
+      "  let a: str = \"x\" + \"y\";\n"
+      "  let b: bool = a == \"xy\";\n"
+      "  let c: bool = a != \"xy\";\n"
+      "  print(a.len);\n"
+      "  print(b && c);\n"
+      "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_string_arithmetic) {
+  const auto analysis = analyze(inMain("  let a: str = \"x\" - \"y\";\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot be applied to values of type 'str'"));
+}
+
+GABLE_TEST(sema_rejects_length_of_an_integer) {
+  const auto analysis = analyze(inMain("  let a: i32 = 1;\n  print(a.len);\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "'len' is only defined for strings and arrays"));
+}
+
+// --------------------------------------------------------------------------
+// v0.2: conversions
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_explicit_integer_conversions) {
+  const auto analysis = analyze(
+      "fn main() -> i32 {\n"
+      "  let big: i64 = 300;\n"
+      "  let small: i32 = big as i32;\n"
+      "  let unsigned: u8 = small as u8;\n"
+      "  let back: i64 = unsigned as i64;\n"
+      "  print(back);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_non_integer_casts) {
+  const auto analysis = analyze(inMain("  let a: i64 = \"x\" as i64;\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "is not an integer conversion"));
+}
+
+GABLE_TEST(sema_rejects_implicit_wide_to_narrow_conversion) {
+  const auto analysis = analyze(inMain("  let a: i64 = 1;\n  let b: i32 = a;\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "type mismatch in initializer"));
+}
+
+// --------------------------------------------------------------------------
+// v0.2: loops
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_for_loops_over_ranges_and_arrays) {
+  const auto analysis = analyze(
+      "fn main() -> i32 {\n"
+      "  var total: i32 = 0;\n"
+      "  for i in 0..10 {\n"
+      "    if i == 3 { continue; }\n"
+      "    if i == 8 { break; }\n"
+      "    total = total + i;\n"
+      "  }\n"
+      "  let values: [i32; 2] = [1, 2];\n"
+      "  for value in values { total = total + value; }\n"
+      "  print(total);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_break_and_continue_outside_loops) {
+  const auto broken = analyze(inMain("  break;\n  return 0;"));
+  GABLE_CHECK(!broken.ok());
+  GABLE_CHECK(mentions(broken, "'break' is only allowed inside a loop"));
+
+  const auto continued = analyze(inMain("  continue;\n  return 0;"));
+  GABLE_CHECK(!continued.ok());
+  GABLE_CHECK(mentions(continued, "'continue' is only allowed inside a loop"));
+}
+
+GABLE_TEST(sema_rejects_for_over_a_non_array) {
+  const auto analysis = analyze(inMain("  for c in \"abc\" { print(c); }\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "iterates over an array or a range"));
+}
+
+GABLE_TEST(sema_rejects_range_of_non_integers) {
+  const auto analysis = analyze(inMain("  for x in 0.0..1.0 { print(x); }\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_assigning_to_loop_variable) {
+  const auto analysis = analyze(inMain("  for i in 0..3 { i = 5; }\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot assign to immutable binding 'i'"));
+}
+
+GABLE_TEST(sema_scopes_loop_variable_to_the_body) {
+  const auto analysis = analyze(inMain("  for i in 0..3 { print(i); }\n  return i;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "undefined variable 'i'"));
+}
+
+// --------------------------------------------------------------------------
+// v0.2: builtins
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_argument_and_file_builtins) {
+  const auto analysis = analyze(
+      "fn main() -> i32 {\n"
+      "  if arg_count() > 1 {\n"
+      "    let first: str = arg(1);\n"
+      "    print(first);\n"
+      "  }\n"
+      "  let written = fs_write_text(\"/tmp/gable-test.txt\", \"text\");\n"
+      "  if !written.ok { eprint(written.error); }\n"
+      "  let read = fs_read_text(\"/tmp/gable-test.txt\");\n"
+      "  if read.ok { print(read.text); }\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_checks_builtin_argument_types) {
+  const auto analysis = analyze(inMain("  print(arg(\"one\"));\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "argument 1 of 'arg' has type 'str', expected 'i32'"));
+}
+
+GABLE_TEST(sema_checks_builtin_arity) {
+  const auto analysis = analyze(inMain("  print(arg_count(1));\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "expects 0 argument(s), found 1"));
+}
+
+GABLE_TEST(sema_rejects_redeclaring_a_builtin) {
+  const auto analysis =
+      analyze("fn str_trim(text: str) -> str { return text; }\nfn main() -> i32 { return 0; }\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "reserved for a built-in function"));
+}
+
+GABLE_TEST(sema_rejects_unknown_field_on_a_builtin_result) {
+  const auto analysis = analyze(inMain("  let read = fs_read_text(\"x\");\n  print(read.contents);\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "struct 'FileReadResult' has no field 'contents'"));
+}
+
+// --------------------------------------------------------------------------
+// v0.2: multiple files
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_resolves_declarations_across_files) {
+  const auto analysis = analyzeProject(
+      {{"main.gable",
+        "import \"util.gable\";\n"
+        "fn main() -> i32 { print(doubled(21)); return 0; }\n"},
+       {"util.gable", "fn doubled(value: i32) -> i32 { return value * 2; }\n"}},
+      "main.gable");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_shares_structs_across_files) {
+  const auto analysis = analyzeProject(
+      {{"main.gable",
+        "import \"types.gable\";\n"
+        "fn main() -> i32 { let p: Point = Point(1, 2); print(p.x); return 0; }\n"},
+       {"types.gable", "struct Point { x: i32, y: i32 }\n"}},
+      "main.gable");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_reports_missing_import_file) {
+  const auto analysis =
+      analyzeProject({{"main.gable", "import \"nope.gable\";\nfn main() -> i32 { return 0; }\n"}},
+                     "main.gable");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot import 'nope.gable'"));
+  GABLE_CHECK(mentions(analysis, "resolved relative to the importing file"));
+}
+
+GABLE_TEST(sema_detects_import_cycles) {
+  const auto analysis = analyzeProject(
+      {{"a.gable", "import \"b.gable\";\nfn main() -> i32 { return 0; }\n"},
+       {"b.gable", "import \"a.gable\";\n"}},
+      "a.gable");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "import cycle"));
+}
+
+GABLE_TEST(sema_loads_each_file_once) {
+  const auto analysis = analyzeProject(
+      {{"main.gable",
+        "import \"left.gable\";\n"
+        "import \"right.gable\";\n"
+        "fn main() -> i32 { return shared(); }\n"},
+       {"left.gable", "import \"shared.gable\";\n"},
+       {"right.gable", "import \"shared.gable\";\n"},
+       {"shared.gable", "fn shared() -> i32 { return 0; }\n"}},
+      "main.gable");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_duplicate_function_across_files) {
+  const auto analysis = analyzeProject(
+      {{"main.gable",
+        "import \"other.gable\";\n"
+        "fn twice() -> i32 { return 1; }\n"
+        "fn main() -> i32 { return twice(); }\n"},
+       {"other.gable", "fn twice() -> i32 { return 2; }\n"}},
+      "main.gable");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "duplicate declaration of function 'twice'"));
+  GABLE_CHECK(mentions(analysis, "previous declaration"));
+}
+
+GABLE_TEST(sema_diagnostics_name_the_offending_file) {
+  const auto analysis = analyzeProject(
+      {{"main.gable", "import \"broken.gable\";\nfn main() -> i32 { return missing(); }\n"},
+       {"broken.gable", "fn other() -> i32 { return 0; }\n"}},
+      "main.gable");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "unknown function 'missing'"));
+  GABLE_CHECK(mentions(analysis, "main.gable:"));
 }

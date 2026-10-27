@@ -1,0 +1,164 @@
+// Task storage for the notes tool.
+//
+// The file format is one task per line: a status flag (0 pending, 1 done), a
+// tab, and the title. Titles may not contain tabs or line breaks, which keeps
+// the format unambiguous without an escaping mechanism.
+//
+// Gable v0.2 has no dynamic arrays, so the tool never holds the whole list in
+// memory. Every command streams over the file contents with take_line and
+// rewrites the parts it keeps.
+
+import "text.gable";
+
+struct Task {
+    done: bool,
+    title: str,
+}
+
+struct LoadResult {
+    ok: bool,
+    content: str,
+    error: str,
+}
+
+/// Reads the notes file. A missing file is not an error: it means there are no
+/// tasks yet, and the first `add` creates it.
+fn load_notes(path: str) -> LoadResult {
+    let read = fs_read_text(path);
+    if read.ok {
+        return LoadResult(true, read.text, "");
+    }
+    if str_find(read.error, "No such file").ok {
+        return LoadResult(true, "", "");
+    }
+    if str_find(read.error, "cannot find the file").ok {
+        return LoadResult(true, "", "");
+    }
+    return LoadResult(false, "", read.error);
+}
+
+fn save_notes(path: str, content: str) -> str {
+    let written = fs_write_text(path, content);
+    if !written.ok {
+        return written.error;
+    }
+    return "";
+}
+
+fn render_stored(task: Task) -> str {
+    if task.done {
+        return "1\t" + task.title + "\n";
+    }
+    return "0\t" + task.title + "\n";
+}
+
+fn render_line(index: i32, task: Task) -> str {
+    var mark: str = "[ ]";
+    if task.done {
+        mark = "[x]";
+    }
+    return str_of_i64(index as i64) + ". " + mark + " " + task.title;
+}
+
+/// True when every non-empty line of `content` is a well-formed task line.
+fn is_valid_content(content: str) -> bool {
+    var rest: str = content;
+    while rest.len > 0 {
+        let split = take_line(rest);
+        if !split.hasLine {
+            return false;
+        }
+        rest = split.rest;
+        if split.line.len == 0 {
+            continue;
+        }
+        if !take_stored_task(split.line).valid {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn append_task(content: str, title: str) -> str {
+    return content + render_stored(Task(false, title));
+}
+
+struct Rewrite {
+    content: str,
+    found: bool,
+}
+
+/// Copies `content` into a new string, marking the task at one-based `target`
+/// as done.
+fn mark_done(content: str, target: i32) -> Rewrite {
+    var result: str = "";
+    var rest: str = content;
+    var index: i32 = 0;
+    var found: bool = false;
+
+    while rest.len > 0 {
+        let split = take_line(rest);
+        if !split.hasLine {
+            break;
+        }
+        rest = split.rest;
+        if split.line.len == 0 {
+            continue;
+        }
+        index = index + 1;
+        var task = parse_task(split.line);
+        if index == target {
+            task.done = true;
+            found = true;
+        }
+        result = result + render_stored(task);
+    }
+    return Rewrite(result, found);
+}
+
+/// Copies `content` into a new string, dropping the task at one-based `target`.
+fn drop_task(content: str, target: i32) -> Rewrite {
+    var result: str = "";
+    var rest: str = content;
+    var index: i32 = 0;
+    var found: bool = false;
+
+    while rest.len > 0 {
+        let split = take_line(rest);
+        if !split.hasLine {
+            break;
+        }
+        rest = split.rest;
+        if split.line.len == 0 {
+            continue;
+        }
+        index = index + 1;
+        if index == target {
+            found = true;
+            continue;
+        }
+        result = result + split.line + "\n";
+    }
+    return Rewrite(result, found);
+}
+
+fn parse_task(text: str) -> Task {
+    let stored = take_stored_task(text);
+    if !stored.valid {
+        return Task(false, "");
+    }
+    return Task(stored.done, stored.title);
+}
+
+fn is_valid_title(title: str) -> bool {
+    if title.len == 0 {
+        return false;
+    }
+    if str_find(title, "\t").ok {
+        return false;
+    }
+    if str_find(title, "\n").ok {
+        return false;
+    }
+    return true;
+}

@@ -8,6 +8,9 @@
 //   expected_stdout.txt             exact expected standard output (optional)
 //   expected_exit.txt               expected exit status (optional, default 0)
 //   expected_stderr_contains.txt    substrings that must appear on stderr (optional)
+//   program_args.txt                one argument per line, passed after `--`;
+//                                   %SCRATCH% expands to a per-case scratch path
+//                                   so that cases can exercise file I/O
 //   compile_error.txt               when present, compilation must fail with exit
 //                                   status 1 and stderr must contain every line
 //
@@ -22,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
 
@@ -105,8 +109,28 @@ struct Runner {
             ? readLines(directory / "expected_stderr_contains.txt")
             : std::vector<std::string>{};
 
+    std::vector<std::string> programArguments;
+    if (fs::exists(directory / "program_args.txt")) {
+      const std::string scratchPath = scratchDir + "/" + name + "-data.txt";
+      for (const std::string& line : readLines(directory / "program_args.txt")) {
+        std::string argument = line;
+        const std::string placeholder = "%SCRATCH%";
+        const std::size_t found = argument.find(placeholder);
+        if (found != std::string::npos) {
+          argument.replace(found, placeholder.size(), scratchPath);
+        }
+        programArguments.push_back(argument);
+      }
+    }
+    fs::remove(scratchDir + "/" + name + "-data.txt");
+
     // 1. `gable run`
-    const gable::ProcessResult run = runCompiler({"run", source.string()});
+    std::vector<std::string> runArguments = {"run", source.string()};
+    if (!programArguments.empty()) {
+      runArguments.push_back("--");
+      runArguments.insert(runArguments.end(), programArguments.begin(), programArguments.end());
+    }
+    const gable::ProcessResult run = runCompiler(runArguments);
     if (!run.started) {
       fail(name, "could not start the compiler: " + run.error);
       return;
@@ -134,7 +158,8 @@ struct Runner {
     }
 
     // 2. `gable build` + direct execution
-    const std::string executable = scratchDir + "/" + name + "-exe";
+    const std::string executable =
+        scratchDir + "/" + name + "-exe" + gable::platform::executableSuffix();
     const gable::ProcessResult build =
         runCompiler({"build", source.string(), "-o", executable});
     if (!build.started || build.exitCode != 0) {
@@ -146,7 +171,10 @@ struct Runner {
       fail(name, "gable build produced warnings" + describe("stderr", build.standardError));
       return;
     }
-    const gable::ProcessResult execution = gable::runProcessCapturing({executable});
+    std::vector<std::string> executionCommand = {executable};
+    executionCommand.insert(executionCommand.end(), programArguments.begin(),
+                            programArguments.end());
+    const gable::ProcessResult execution = gable::runProcessCapturing(executionCommand);
     if (!execution.started) {
       fail(name, "could not execute built program: " + execution.error);
       return;
@@ -166,7 +194,8 @@ struct Runner {
 
   void runCompileErrorCase(const std::string& name, const fs::path& source,
                            const std::vector<std::string>& expectedMessages) {
-    const std::string executable = scratchDir + "/" + name + "-should-not-exist";
+    const std::string executable =
+        scratchDir + "/" + name + "-should-not-exist" + gable::platform::executableSuffix();
     const gable::ProcessResult build =
         runCompiler({"build", source.string(), "-o", executable});
     if (!build.started) {

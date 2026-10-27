@@ -25,6 +25,13 @@ enum class TokenKind {
   KwWhile,
   KwTrue,
   KwFalse,
+  KwStruct,
+  KwImport,
+  KwAs,
+  KwBreak,
+  KwContinue,
+  KwFor,
+  KwIn,
 
   // Types.
   KwI8,
@@ -44,9 +51,13 @@ enum class TokenKind {
   RParen,
   LBrace,
   RBrace,
+  LBracket,
+  RBracket,
   Comma,
   Colon,
   Semicolon,
+  Dot,        // member access
+  DotDot,     // range separator in `for i in 0..n`
   Arrow,      // ->
   Plus,
   Minus,
