@@ -13,6 +13,12 @@
  * being reclaimed wrongly, which is not.
  */
 #if defined(_WIN32)
+/* GetCurrentThreadStackLimits is a Windows 8 API. Asking for it explicitly keeps
+ * the declaration visible even when the build does not set a target version. */
+#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0602)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0602
+#endif
 #include <windows.h>
 #else
 #if defined(__APPLE__)
