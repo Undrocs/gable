@@ -503,7 +503,7 @@ immediately afterwards can still lose the write.
 `fs_lock` and `fs_unlock` provide the advisory lock that a read-modify-write
 sequence needs, because two programs that read the same file and then write it
 back would otherwise lose one of the updates. `fs_lock` creates `<path>.lock`
-exclusively; while another program holds it, it retries for about a second and
+exclusively; while another program holds it, it retries for about two seconds and
 then reports code 6. A lock file older than ten seconds is treated as abandoned by
 a program that died without unlocking, and removed. `fs_unlock` removes the lock
 file and succeeds when there is none. The lock is advisory: a program that never

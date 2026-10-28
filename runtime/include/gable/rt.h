@@ -193,7 +193,7 @@ gable_rt_FileWriteResult gable_rt_fs_write_text(gable_str path, gable_str text);
 gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str text);
 
 /* Advisory lock for read-modify-write sequences: creates `<path>.lock`
- * exclusively, retrying for about a second, and treats a lock older than ten
+ * exclusively, retrying for about two seconds, and treats a lock older than ten
  * seconds as abandoned. `fs_unlock` removes it. Neither function touches the data
  * file itself. */
 gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path);

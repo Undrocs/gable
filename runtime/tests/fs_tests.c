@@ -344,7 +344,9 @@ static void test_locking(const char* scratch) {
     const gable_rt_FileWriteResult locked = gable_rt_fs_lock(file);
     const char status = locked.ok ? 'y' : 'n';
     (void)write(pipe_fds[1], &status, 1);
-    sleep(2);
+    /* Held longer than fs_lock retries, so the parent is guaranteed to see a
+     * busy lock rather than taking it over. */
+    sleep(5);
     _exit(0);
   }
   close(pipe_fds[1]);

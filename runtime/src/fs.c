@@ -46,10 +46,16 @@
  * that died, how often to retry a busy lock, and how long to wait between
  * attempts. */
 #define GABLE_RT_LOCK_STALE_SECONDS 10
-#define GABLE_RT_LOCK_ATTEMPTS 50
+#define GABLE_RT_LOCK_ATTEMPTS 100
 #define GABLE_RT_LOCK_SLEEP_MILLISECONDS 20
 /* How many names to try for the temporary file of an atomic write. */
 #define GABLE_RT_TEMPORARY_ATTEMPTS 64
+/* Windows refuses to replace or delete a file that another process has open, and
+ * reports it as an access denial. The holders are usually a reader or a scanner
+ * holding the file for an instant, so the operation is retried briefly before it
+ * is reported. */
+#define GABLE_RT_REPLACE_ATTEMPTS 50
+#define GABLE_RT_REPLACE_SLEEP_MILLISECONDS 10
 
 #if defined(_WIN32)
 typedef wchar_t GableOsChar;
@@ -192,8 +198,7 @@ static FILE *open_file(gable_str path, const char *mode, int32_t *code, gable_st
 
 /* Creates `path` exclusively and returns an open descriptor, or -1. It never
  * follows an existing file or symbolic link. */
-static int create_exclusive(gable_str path, int32_t *code, gable_str *message,
-                            int *error_number_out) {
+static int create_exclusive(gable_str path, int32_t *code, gable_str *message) {
   GableOsPath os;
   if (!path_to_os(path, &os, code, message)) {
     return -1;
@@ -207,7 +212,6 @@ static int create_exclusive(gable_str path, int32_t *code, gable_str *message,
 #endif
   if (descriptor < 0) {
     const int error_number = errno;
-    *error_number_out = error_number;
     *code = failure_code(error_number);
     const char *text = strerror(error_number);
     *message = gable_rt_str_copy(text, (int64_t)strlen(text));
@@ -319,6 +323,40 @@ static void sleep_milliseconds(int milliseconds) {
   request.tv_sec = milliseconds / 1000;
   request.tv_nsec = (long)(milliseconds % 1000) * 1000000L;
   nanosleep(&request, NULL);
+#endif
+}
+
+/* Replaces `to` with `from`. POSIX renames in one step; on Windows a file that
+ * another process has open cannot be replaced at that instant, so a failure is
+ * retried. */
+static bool replace_os_file(gable_str from, gable_str to) {
+#if defined(_WIN32)
+  for (int attempt = 0; attempt < GABLE_RT_REPLACE_ATTEMPTS; ++attempt) {
+    if (rename_os_file(from, to)) {
+      return true;
+    }
+    sleep_milliseconds(GABLE_RT_REPLACE_SLEEP_MILLISECONDS);
+  }
+  return false;
+#else
+  return rename_os_file(from, to);
+#endif
+}
+
+/* Removes `path`. On Windows a file that another process is looking at cannot be
+ * deleted at that instant; the waiters of a lock are doing exactly that, so the
+ * deletion is retried. */
+static bool remove_os_file_retrying(gable_str path) {
+#if defined(_WIN32)
+  for (int attempt = 0; attempt < GABLE_RT_REPLACE_ATTEMPTS; ++attempt) {
+    if (remove_os_file(path)) {
+      return true;
+    }
+    sleep_milliseconds(GABLE_RT_REPLACE_SLEEP_MILLISECONDS);
+  }
+  return false;
+#else
+  return remove_os_file(path);
 #endif
 }
 
@@ -475,7 +513,6 @@ gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str
   char storage[GABLE_RT_MAX_PATH_BYTES + 1];
   gable_str temporary = empty_string();
   int descriptor = -1;
-  int error_number = 0;
   for (int attempt = 0; attempt < GABLE_RT_TEMPORARY_ATTEMPTS && descriptor < 0; ++attempt) {
     ++counter;
     char suffix[64];
@@ -491,8 +528,13 @@ gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str
       result.error = literal("file path is too long");
       return result;
     }
-    descriptor = create_exclusive(temporary, &code, &message, &error_number);
-    if (descriptor < 0 && error_number != EEXIST) {
+    descriptor = create_exclusive(temporary, &code, &message);
+    /* When the name is taken the path exists and another counter value is
+     * worth trying; when it is not, creation failed for a reason that would
+     * repeat. Windows reports a name that another process has open as an access
+     * denial rather than a collision, so the question is asked of the file
+     * system instead of the error number. */
+    if (descriptor < 0 && file_age_seconds(temporary) < 0) {
       result.code = code;
       result.error = message;
       return result;
@@ -515,7 +557,7 @@ gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str
     result.error = literal("cannot write file");
     return result;
   }
-  if (!rename_os_file(temporary, path)) {
+  if (!replace_os_file(temporary, path)) {
     /* errno is not set by MoveFileExW, so on Windows the failure is reported
      * without a code the C library owns. Guessing from a stale errno would be
      * worse than saying less. */
@@ -562,8 +604,7 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
   }
 
   for (int attempt = 0; attempt < GABLE_RT_LOCK_ATTEMPTS; ++attempt) {
-    int error_number = 0;
-    const int descriptor = create_exclusive(lockPath, &code, &message, &error_number);
+    const int descriptor = create_exclusive(lockPath, &code, &message);
     if (descriptor >= 0) {
       char owner[32];
       const int length = snprintf(owner, sizeof(owner), "%lu\n", process_id_value());
@@ -574,16 +615,26 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
       result.ok = true;
       return result;
     }
-    if (error_number != EEXIST) {
-      /* Only contention is worth retrying; a permission problem or an invalid
-       * path would fail the same way fifty times. */
+    /* Deciding whether this is contention by the error number would be wrong on
+     * Windows, where a lock file that another process has open cannot be created
+     * exclusively either and the attempt fails with an access denial. A lock file
+     * that exists means contention; one that does not means the creation failed
+     * for a reason that retrying cannot fix. */
+    const int64_t age = file_age_seconds(lockPath);
+    if (age < 0) {
       result.code = code;
       result.error = message;
       return result;
     }
-    const int64_t age = file_age_seconds(lockPath);
     if (age >= GABLE_RT_LOCK_STALE_SECONDS) {
-      remove_os_file(lockPath);
+      if (!remove_os_file_retrying(lockPath)) {
+        /* The lock is abandoned by a program that is gone, but this process may
+         * not delete it: report why creation failed instead of waiting for a
+         * lock that will never be released. */
+        result.code = code;
+        result.error = message;
+        return result;
+      }
       continue;
     }
     sleep_milliseconds(GABLE_RT_LOCK_SLEEP_MILLISECONDS);
@@ -616,13 +667,16 @@ gable_rt_FileWriteResult gable_rt_fs_unlock(gable_str path) {
     return result;
   }
 
-  if (remove_os_file(lockPath)) {
+  if (remove_os_file_retrying(lockPath)) {
     result.ok = true;
     return result;
   }
+  /* The error of the failed deletion is read before anything else runs, so that
+   * it describes the deletion and not a later call. */
   const int error_number = errno;
-  if (error_number == ENOENT) {
-    result.ok = true;  // nothing to release
+  if (file_age_seconds(lockPath) < 0) {
+    /* Another process released it while this one was retrying. */
+    result.ok = true;
     return result;
   }
   result.code = failure_code(error_number);
