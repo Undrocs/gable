@@ -11,23 +11,28 @@ please report it.
 | --- | --- |
 | Source handling | UTF-8 validated, CRLF accepted, NUL rejected, 64 MiB per-file limit, 512-file limit |
 | Lexing | keywords, identifiers, decimal/hex/binary literals with 64-bit range check, strings with escapes and Unicode escapes, `//` and nested `/* */` comments, `[` `]` `.` `..`, reserved `u` suffix and `&`/`|` diagnostics |
-| Parsing | functions, structs, imports, `let`/`var`, assignment, expression statements, `return`, `if`/`else if`/`else`, `while`, `for` over ranges and arrays, `break`, `continue`, nested blocks, array types and literals, field access, indexing, `as`, full operator precedence, error recovery, 200-level nesting cap |
-| Semantics | one program-wide namespace across files, scopes and shadowing, duplicate detection, immutability and parameter rules, struct field resolution and containment-cycle detection, array type interning, literal contextual typing with range checks, no implicit conversions, string operator rules, return-path analysis, loop control checks, `main` signature checks, builtin validation |
+| Parsing | functions, structs, imports, `let`/`var`, assignment, expression statements, `return`, `if`/`else if`/`else`, `while`, `for` over ranges, arrays, and lists, growable list types `[T]`, `break`, `continue`, nested blocks, array types and literals, field access, indexing, `as`, full operator precedence, error recovery, 200-level nesting cap |
+| Semantics | one program-wide namespace across files, scopes and shadowing, duplicate detection, immutability and parameter rules, struct field resolution and containment-cycle detection, array and list type interning, literal contextual typing with range checks, no implicit conversions, string operator rules, return-path analysis, loop control checks, `main` signature checks, builtin validation |
 | Diagnostics | `path:line:column: severity: message` naming the file, source line and caret, notes, multi-error runs, de-duplicated cascades, windowed rendering for very long lines |
 | Code generation | typed IR to C17, explicit left-to-right evaluation order with short-circuiting preserved, wrapping arithmetic, runtime division helpers, bounds checks, array wrapper structs, dependency-ordered struct typedefs, `--emit-c` |
 | Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
 | Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
-| Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70 |
-| Testing | 215 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 82 runtime file tests, sanitizer configuration |
+| Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming, splitting and joining; growable lists with append, indexing, and iteration; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70; automatic reclamation of heap values |
+| Testing | 232 unit tests, 62 integration cases, 11 examples, 83 notes-tool tests, 82 runtime file tests, 15 runtime memory tests, 10 runtime list tests, memory-limit measurement, sanitizer configuration |
 
 ## Known bugs and rough edges
 
-* **No memory reclamation.** Strings built at run time and file contents are never
-  freed. A long-running program that concatenates strings grows without bound.
-  This is the largest known consequence of the v0.2 design (ADR 0017).
-* **No dynamic arrays or maps.** Every array has a compile-time length. A program
-  that needs an unbounded sequence has to read its input whole, as `tools/notes`
-  does with the notes file, or keep a fixed-size buffer.
+* **Conservative reclamation overshoots.** Peak memory is the live set plus
+  pointer-shaped leftovers on the stack, so a program can use somewhat more than
+  it strictly needs. It is never less than the live set (specification §12.3).
+* **Building a string in a loop copies it every time.** Memory is reclaimed, but
+  `text = text + piece` is still *O(n²)* in copying because `str` is immutable.
+  A string builder and growable containers are next (roadmap, milestone 7).
+* **No maps or sets.** Lists grow, but there is no keyed collection; a program
+  that needs one searches a list or writes its own structure.
+* **Building a string with `+` in a loop copies it every time.** `text = text +
+  piece` is *O(n²)*. Collect the pieces in a `[str]` and call `str_join`, which
+  allocates once; a mutable string builder does not exist yet.
 * **Import nesting is capped at 64 levels.** Loading an import is recursive, and
   the cap is what keeps the loader's stack bounded; a program that chains
   imports deeper has to declare the shared files in the root file instead.
@@ -52,14 +57,15 @@ please report it.
 ## Missing language features
 
 * Generics, traits, closures, first-class functions, overloading.
-* Dynamic arrays, maps, sets, enums, tuples, unions, pointers, references.
+* Maps, sets, enums, tuples, unions, pointers, references.
 * Bitwise and shift operators (`&` and `|` reserved).
-* Character-level string iteration, formatting beyond `str_of_i64`/`str_of_bool`.
+* Character-level string iteration, formatting beyond `str_of_i64`/`str_of_bool`,
+  and a way to join a list of strings into one.
 * Constants, compile-time evaluation, macros, attributes.
 * Pattern matching, exceptions, `defer`/`finally`.
 * Modules with visibility, package management, separate compilation.
-* Any concurrency, async, or memory-management model beyond stack values and
-  never-freed allocations.
+* Concurrency and async: a second thread would need a stack the collector can
+  see, so it cannot be added before the runtime supports it.
 * A standard library beyond the built-ins in the specification.
 * User-defined printing (no `print` of a struct or array).
 

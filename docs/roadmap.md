@@ -95,8 +95,9 @@ clear message when `GABLE_WITH_LLVM=ON` but LLVM is missing.
 Each item requires a specification update, implementation, and tests before it is
 merged.
 
-* Dynamic arrays and maps, which require the memory model below.
-* A memory model: ownership and reclamation of run-time strings and containers.
+* Maps and sets on top of the runtime heap.
+* A string builder for repeated appends (`str_join` already covers collecting
+  pieces into a list, so what is missing is the streaming case).
 * Character-level text operations and formatting.
 * Enums, tuples, and a sum type for error handling.
 * Bitwise and shift operators.

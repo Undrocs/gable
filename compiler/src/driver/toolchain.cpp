@@ -202,6 +202,9 @@ std::vector<std::string> compilerArguments(CCompilerFamily family, const std::st
       "-O" + std::to_string(optimizationLevel),
       "-Wall",
       "-Wextra",
+      // The runtime asks the C library where the thread's stack begins; on
+      // hosts where pthreads are a separate library this is what links it.
+      "-pthread",
       "-I" + includeDir,
   };
   for (const std::string& flag : extraCompilerFlags()) {

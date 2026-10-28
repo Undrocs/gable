@@ -399,7 +399,8 @@ gable_rt_FileReadResult gable_rt_fs_read_text(gable_str path) {
   const bool failed = ferror(file) != 0;
   fclose(file);
   if (failed || read != (size_t)size) {
-    free(buffer);
+    /* Heap memory is reclaimed by the collector, never by the caller; the failed
+     * buffer becomes garbage as soon as this frame is gone. */
     result.code = GABLE_RT_FILE_IO;
     result.error = literal("cannot read file");
     return result;
@@ -607,6 +608,12 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
     return result;
   }
 
+  /* The failure of the last attempt, kept so that a lock that never appears can
+   * be reported as the file system error it is instead of as contention. */
+  int last_error_number = 0;
+  int32_t last_code = GABLE_RT_FILE_OK;
+  gable_str last_message = empty_string();
+
   for (int attempt = 0; attempt < GABLE_RT_LOCK_ATTEMPTS; ++attempt) {
     int error_number = 0;
     const int descriptor = create_exclusive(lockPath, &code, &message, &error_number);
@@ -628,14 +635,24 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
      * else - a directory that cannot be written, an invalid path - would fail
      * the same way on every attempt, so it is reported at once. */
     const int64_t age = file_age_seconds(lockPath);
-    const bool contention = age >= 0 || error_number == EEXIST;
+    bool contention = age >= 0 || error_number == EEXIST;
+#if defined(_WIN32)
+    /* A lock file that another process is in the middle of deleting answers the
+     * exclusive creation with an access denial and is momentarily invisible to
+     * a stat, so on Windows an access denial is retried as well. If it persists,
+     * the loop reports it below rather than calling it contention. */
+    contention = contention || error_number == EACCES;
+#endif
     if (!contention) {
       result.code = code;
       result.error = message;
       return result;
     }
+    last_error_number = error_number;
+    last_code = code;
+    last_message = message;
     if (age < 0) {
-      continue;  /* the holder released it while this attempt was failing */
+      continue;  /* the holder released it, or is deleting the file, right now */
     }
     if (age >= GABLE_RT_LOCK_STALE_SECONDS) {
       if (!remove_os_file_retrying(lockPath)) {
@@ -649,6 +666,15 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
       continue;
     }
     sleep_milliseconds(GABLE_RT_LOCK_SLEEP_MILLISECONDS);
+  }
+
+  if (last_error_number != 0 && last_error_number != EEXIST &&
+      file_age_seconds(lockPath) < 0) {
+    /* No lock file exists, yet creating one kept failing: this is not
+     * contention, it is a directory or a path the process cannot use. */
+    result.code = last_code;
+    result.error = last_message;
+    return result;
   }
 
   result.code = GABLE_RT_FILE_BUSY;

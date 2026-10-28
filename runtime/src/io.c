@@ -1,4 +1,4 @@
-/* Gable runtime -- standard output, standard error, and allocation. */
+/* Gable runtime -- standard output and standard error. */
 #include "gable/rt.h"
 
 #include <inttypes.h>
@@ -24,14 +24,6 @@ static void prepare_standard_streams(void) {
     prepared = true;
   }
 #endif
-}
-
-void *gable_rt_allocate(size_t bytes) {
-  void *memory = malloc(bytes == 0 ? 1 : bytes);
-  if (memory == NULL) {
-    gable_rt_trap("out of memory");
-  }
-  return memory;
 }
 
 void gable_rt_write(gable_str value, bool to_stderr, bool newline) {

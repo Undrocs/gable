@@ -1,67 +1,46 @@
 // Text helpers for the notes tool.
 //
-// Gable v0.2 has no dynamic arrays and no string indexing, so splitting is
-// expressed with str_find and str_slice: one line at a time, with the remainder
-// carried forward.
+// The stored form of a task is one line: a status flag (0 pending, 1 done), a
+// tab, and the title. Parsing is a split, and building a line is a join, so the
+// tool never walks a string byte by byte.
 
-struct LineSplit {
-    line: str,
-    rest: str,
-    hasLine: bool,
-}
-
-/// Splits off the first line of `text`. The trailing line break is dropped.
-/// A final line without a line break is returned as well; a trailing line break
-/// therefore ends the input instead of producing an empty last line.
-fn take_line(text: str) -> LineSplit {
-    let newline = str_find(text, "\n");
-    if !newline.ok {
-        return LineSplit(text, "", text.len > 0);
-    }
-    let index: i32 = newline.index as i32;
-    let length: i32 = text.len as i32;
-    let line = str_slice(text, 0, index);
-    let rest = str_slice(text, index + 1, length - index - 1);
-    if !line.ok || !rest.ok {
-        return LineSplit("", "", false);
-    }
-    return LineSplit(line.text, rest.text, true);
-}
-
-/// Splits `text` at its first tab into a status flag and a title.
-/// The stored form is `0<TAB>title` (pending) or `1<TAB>title` (done).
 struct StoredTask {
     valid: bool,
     done: bool,
     title: str,
 }
 
-fn take_stored_task(text: str) -> StoredTask {
-    let tab = str_find(text, "\t");
-    if !tab.ok || tab.index != 1 {
+/// Parses one stored line. Anything that does not have exactly the shape the
+/// file format describes is reported as invalid instead of being guessed at.
+fn parse_stored(line: str) -> StoredTask {
+    let fields = str_split(line, "\t");
+    if fields.len != 2 {
         return StoredTask(false, false, "");
     }
-    let length: i32 = text.len as i32;
-    let title = str_slice(text, 2, length - 2);
-    if !title.ok {
-        return StoredTask(false, false, "");
-    }
-    let flag = str_slice(text, 0, 1);
-    if !flag.ok {
-        return StoredTask(false, false, "");
-    }
+    let flag = fields[0];
     // The flag is exactly one character and exactly "0" or "1": a line such as
     // "x<TAB>task" is corruption, not a pending task.
-    if flag.text != "0" && flag.text != "1" {
+    if flag != "0" && flag != "1" {
         return StoredTask(false, false, "");
     }
-    // The title is stored on one line, so it must be non-empty and free of the
-    // characters that would change the shape of the file when it is read back.
-    if title.text.len == 0 {
+    let title = fields[1];
+    if !is_valid_title(title) {
         return StoredTask(false, false, "");
     }
-    if str_find(title.text, "\t").ok || str_find(title.text, "\n").ok {
-        return StoredTask(false, false, "");
+    return StoredTask(true, flag == "1", title);
+}
+
+/// A title is stored on one line, so it must be non-empty and free of the
+/// characters that would change the shape of the file when it is read back.
+fn is_valid_title(title: str) -> bool {
+    if title.len == 0 {
+        return false;
     }
-    return StoredTask(true, flag.text == "1", title.text);
+    if str_find(title, "\t").ok {
+        return false;
+    }
+    if str_find(title, "\n").ok {
+        return false;
+    }
+    return true;
 }

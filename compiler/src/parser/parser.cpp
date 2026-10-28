@@ -365,9 +365,18 @@ ast::TypeSyntax Parser::parseTypeAnnotation() {
     if (!type.element->isValid()) {
       return ast::TypeSyntax{};
     }
+    if (check(TokenKind::RBracket)) {
+      // `[T]` without a length: a growable list of T.
+      const Token& close = advance();
+      type.kind = ast::TypeSyntax::Kind::List;
+      type.span = SourceSpan{open.span.begin, close.span.end};
+      return type;
+    }
     if (!check(TokenKind::Semicolon)) {
-      error(current().span, std::string("expected ';' and a length in an array type, found ") +
-                                tokenKindName(current().kind));
+      error(current().span,
+            std::string("expected ']' for a growable list type, or ';' and a length for a "
+                        "fixed-length array type, found ") +
+                tokenKindName(current().kind));
       return ast::TypeSyntax{};
     }
     advance();

@@ -65,7 +65,19 @@ jobs:
             -DBUILD_TESTING=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: |
+          set +e
+          output=$(cmake --build build --parallel 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if [ $status -ne 0 ]; then
+            tail=$(printf '%s\n' "$output" | tail -c 6000)
+            tail=${tail//'%'/'%25'}
+            tail=${tail//$'\r'/'%0D'}
+            tail=${tail//$'\n'/'%0A'}
+            echo "::error title=build failed::$tail"
+            exit 1
+          fi
 
       # The test output is reported as an annotation as well, so that a failure
       # is readable on the pull request instead of only in the raw log.
@@ -97,6 +109,25 @@ jobs:
           ./build/gable run examples/args.gable -- Ada Grace | head -3
           ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt add "smoke test"
           ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt list | grep "smoke test"
+
+      # A program that allocates 1.6 GiB of short-lived strings must stay inside a
+      # small fixed peak. This is the only check of the reclamation claim on a
+      # real compiled program, and it needs fork/wait, so it runs on Linux only.
+      - name: Check memory reclamation
+        if: matrix.compiler == 'gcc' && matrix.build_type == 'Debug'
+        run: |
+          set +e
+          output=$(./tools/check-memory.sh ./build/gable 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if [ $status -ne 0 ]; then
+            tail=$(printf '%s\n' "$output" | tail -c 4000)
+            tail=${tail//'%'/'%25'}
+            tail=${tail//$'\r'/'%0D'}
+            tail=${tail//$'\n'/'%0A'}
+            echo "::error title=memory check failed::$tail"
+            exit 1
+          fi
 
   install:
     name: Install and use from a prefix
@@ -163,7 +194,16 @@ jobs:
           }
 
       - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+        shell: pwsh
+        run: |
+          $output = cmake --build build --config ${{ matrix.build_type }} --parallel 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            $tail = $output.Substring([Math]::Max(0, $output.Length - 6000))
+            $message = $tail -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            Write-Host "::error title=build failed::$message"
+            exit 1
+          }
 
       - name: Test
         shell: pwsh

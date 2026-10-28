@@ -54,6 +54,8 @@ paths, so tests and future tooling drive it directly.
 | `compiler/include/gable/temporary.h`, `src/driver/temporary.cpp` | Private temporary directories |
 | `compiler/include/gable/cli.h`, `src/cli/cli.cpp` | Argument parsing, command dispatch, exit codes |
 | `runtime/include/gable/rt.h`, `runtime/src/*.c` | C17 runtime with a C ABI |
+| `runtime/src/gc.c`, `runtime/src/stack_top.c` | Heap for `str`, lists, and file buffers; conservative mark-and-sweep collector; each host's stack bounds |
+| `runtime/src/list.c` | Growable lists: storage that doubles, element stride chosen by the compiler |
 
 ## Loading and imports
 
@@ -70,6 +72,46 @@ analysis is skipped: an incomplete tree produces misleading follow-on errors.
 The loader also owns the size limit (64 MiB per file) and the file-count limit
 (512), which keep a hostile or accidental import structure from consuming the
 machine.
+
+## Runtime memory
+
+The runtime owns every value the language cannot put on the stack: the bytes
+behind `str`, and the buffer `fs_read_text` returns. It has one allocator,
+`gable_rt_allocate` in `runtime/src/gc.c`. Nothing in the runtime or in generated
+code frees a block; a block becomes garbage when the program stops referring to it,
+and the collector reclaims it during a later allocation. That keeps the ownership
+question out of the runtime's API and out of the language.
+
+The collector traces from two roots: the machine stack, scanned from the current
+stack pointer up to the base of the thread's stack, and the callee-saved registers,
+copied out with `setjmp`. A word is treated as a pointer when it falls anywhere
+inside a block the runtime allocated, including its header, so slices that point
+into the middle of a string keep that string alive. Blocks are held in a table
+sorted by address, which makes resolving a candidate pointer a binary search.
+
+Two details matter for correctness and are easy to get wrong:
+
+* *Where the stack ends.* The upper bound cannot be the address of a local in the
+  generated entry point: the compiler may place other locals above it, and
+  AddressSanitizer does. `runtime/src/stack_top.c` asks the host for the thread's
+  stack bounds instead. When a host cannot answer, the collector stays off rather
+  than guessing, and the program simply keeps its memory.
+* *What a collection is allowed to see.* AddressSanitizer poisons the redzones
+  between stack variables, and a conservative scan walks through them. The scan
+  skips a word that is not fully addressable, which cannot lose a live pointer but
+  keeps sanitizer builds usable.
+
+Lists are handles to a heap block that holds the elements, the count, the capacity,
+and the element stride. The compiler knows the element type, so one runtime
+implementation serves every element type: the generated code passes addresses of
+elements and copies them back out with `memcpy`. A list element is therefore not a
+C lvalue, and an assignment whose target is rooted in a list element is lowered to
+a `memcpy` into the storage the runtime returns rather than to a C assignment.
+
+`gable_rt_init()` is called first in the generated entry point. It records the
+stack top, enables the collector, and registers an `atexit` handler that frees
+everything, so that leak checkers report leaks in the program rather than in the
+runtime.
 
 ## Prelude
 

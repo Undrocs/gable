@@ -87,6 +87,7 @@ class SemanticAnalyzer {
   ir::ExprPtr checkBinary(const ast::Expr& expr, std::optional<ir::Type> expected);
   ir::ExprPtr checkCall(const ast::Expr& expr);
   ir::ExprPtr checkBuiltinCall(const ast::Expr& expr, const BuiltinInfo& builtin);
+  ir::ExprPtr checkListPush(const ast::Expr& expr);
   ir::ExprPtr checkPrintCall(const ast::Expr& expr, ir::Builtin id);
   ir::ExprPtr checkStructInit(const ast::Expr& expr, const ir::StructInfo& info);
   ir::ExprPtr checkFieldAccess(const ast::Expr& expr);

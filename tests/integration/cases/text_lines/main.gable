@@ -1,0 +1,32 @@
+// Reading text into fields, and building text without repeated concatenation.
+fn main() -> i32 {
+    let record = "write spec|open|2";
+    let fields = str_split(record, "|");
+    print(fields.len);
+    print(fields[0]);
+    print(fields[2]);
+
+    let lines = str_split("first\nsecond\n", "\n");
+    print(lines.len);
+    for line in lines {
+        let shown = "[" + line + "]";
+        print(shown);
+    }
+
+    // Joining a list is O(total length); concatenating in a loop is not.
+    var words: [str] = [];
+    for word in str_split("a b c d", " ") {
+        list_push(words, word);
+    }
+    print(str_join(words, "-"));
+
+    let empty: [str] = [];
+    print(str_join(empty, ",").len);
+    print(str_split("", ",").len);
+
+    let bytes = str_split("ab", "");
+    print(bytes.len);
+    print(bytes[0]);
+    print(bytes[1]);
+    return 0;
+}

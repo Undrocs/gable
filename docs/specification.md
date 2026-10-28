@@ -204,6 +204,13 @@ Every Gable value is copied when it is assigned, passed as an argument, returned
 or read out of an aggregate. There are no references and no aliasing, so a
 function cannot modify its caller's variables except by returning a new value.
 
+There is one deliberate exception, and it is about what a value *is* rather than
+how copying works: a list (§6.6) is a handle to shared storage. Copying the handle
+is still a copy of the value, and the variable it lives in is still independent —
+but both handles name the same elements, so appending through one is visible
+through the other. Strings and arrays are values all the way down and are copied
+in full.
+
 ### 6.2 Integers
 
 Integers are fixed-width. Arithmetic wraps modulo 2<sup>width</sup> and never
@@ -228,8 +235,9 @@ NUL-terminated, may contain any byte except NUL, and may be arbitrarily long.
 * Literals are valid UTF-8. Operations such as slicing work on bytes and may
   split a multi-byte character; that is documented behaviour, not corruption.
 * `==` and `!=` compare contents, not identity.
-* `+` concatenates and allocates a new string. The result is valid until the
-  process exits: Gable 0.2 has no memory reclamation (§12).
+* `+` concatenates and allocates a new string. The result stays valid for as long
+  as the program can reach it; strings that are no longer reachable are reclaimed
+  automatically (§12).
 * Strings cannot be indexed. Use `str_slice`, `str_find`, and `str_trim` (§9).
 * Other operators on strings are compile-time errors.
 
@@ -253,7 +261,65 @@ rejected at run time and unsigned indices are compared against the length.
 `values.len` is the element count and has type `i64`. Arrays are copied like any
 other value.
 
-### 6.6 Structs
+### 6.6 Lists
+
+An array has a fixed length, which is the wrong tool for data that grows. A list
+has no length in its type and can be appended to:
+
+```gable
+let names: [str] = [];          // an empty list of strings
+list_push(names, "ada");
+list_push(names, "grace");
+print(names.len);               // 2
+print(names[0]);                // ada
+names[1] = "hopper";            // replaces an element
+for name in names {
+  print(name);
+}
+```
+
+* `[T]` is a growable list of `T`; `[T; N]` is a fixed-length array. The two are
+  different types and do not convert into each other.
+* A list literal is valid where a list type is expected: `let counts: [i64] =
+  [1, 2];` starts a list with two elements, and `let empty: [i64] = [];` starts an
+  empty one. An empty literal with no expected type is a compile-time error,
+  because there is nothing to say what it would hold.
+* `list_push(list, value)` appends `value` and returns nothing. The value type
+  must be the element type of the list.
+* `list[i]` reads an element and `list[i] = value` replaces one. Both are bounds
+  checked, and an out-of-range index traps with exit status 70 (§11).
+* `list.len` is the element count and has type `i64`.
+* `for item in list { ... }` visits the elements, in order, that were in the list
+  when the loop started.
+* Elements may be any type that is not `void`: scalars, strings, structs, arrays,
+  and other lists (`[[i32]]`).
+
+A list value is a handle to shared storage, not the elements themselves. Copying a
+list, passing it to a function, or returning it copies the handle: every copy sees
+the same elements and the same length. This is what makes `list_push(items, x)`
+inside a function affect the caller's list, and it is the one place in Gable where
+a `let` binding does not freeze what it refers to:
+
+```gable
+fn add(values: [i32]) -> void {
+  list_push(values, 1);         // visible to the caller
+}
+
+fn main() -> i32 {
+  let numbers: [i32] = [];
+  add(numbers);
+  print(numbers.len);           // 1
+  return 0;
+}
+```
+
+Mutation is always visible in the source: an element is replaced by `list[i] = v`
+and a list grows only where `list_push` is written. Nothing is copied implicitly
+when a list is passed, so the cost of a call does not depend on the list's length.
+The memory behind a list is reclaimed like any other heap value when no list
+refers to it (§12).
+
+### 6.7 Structs
 
 ```gable
 let point: Point = Point(3, 4);
@@ -347,6 +413,11 @@ be modified.
 An array loop copies the array expression once and iterates over that copy, so
 modifying the original binding inside the body does not affect the iteration. The
 loop variable is a copy of the element.
+
+A list loop evaluates the list once and reads its length when the loop starts. It
+visits that many elements in order; elements are read one at a time, so a body
+that appends to the list does not disturb the iteration but also does not extend
+it. The loop variable is a copy of the element.
 
 ### 7.6 `break` and `continue`
 
@@ -457,6 +528,9 @@ reserved.
 | `str_find(haystack, needle)` | `str, str -> FindResult` | byte offset of the first occurrence |
 | `str_slice(text, start, length)` | `str, i32, i32 -> SliceResult` | copies a byte range |
 | `str_trim(text)` | `str -> str` | removes leading and trailing ASCII whitespace (space, tab, newline, carriage return, vertical tab, form feed; not other Unicode spaces) |
+| `list_push(list, value)` | `[T], T -> void` | appends `value` to `list` (§6.6) |
+| `str_split(text, separator)` | `str, str -> [str]` | cuts `text` at every `separator`; an empty separator cuts between bytes |
+| `str_join(parts, separator)` | `[str], str -> str` | concatenates `parts` with `separator` between them |
 
 The result types are ordinary structs declared by the prelude, so their fields
 are read like any other struct:
@@ -488,6 +562,11 @@ the NUL: `"dir/file\0.orig"` and `"dir/file"` name the same file to the operatin
 system, so accepting the first would let a program written to preserve the second
 overwrite it. Gable strings may still contain NUL bytes; only path arguments are
 restricted this way.
+
+`str_split` copies each piece, so the pieces stay valid after the text they came
+from is gone, and `str_join` allocates the result once. Together they are how a
+program turns a file into fields and fields back into a file: appending with `+`
+in a loop copies the whole text on every step.
 
 `fs_read_text` reads at most 64 MiB and rejects larger files.
 
@@ -546,11 +625,61 @@ lost.
 
 ## 12. Memory
 
-Gable 0.2 has no memory reclamation: strings produced by concatenation,
-conversion, slicing, and trimming are never freed, and `fs_read_text` buffers are
-kept for the life of the process. This is intentional for this version and is the
-main reason the language is not ready for long-running programs. Values of
-fixed-size types live on the stack.
+### 12.1 What a program says about memory
+
+Nothing. Gable has no ownership annotations, no `free`, and no lifetime syntax.
+Values of the fixed-size types live on the stack. Strings, and the buffers behind
+`fs_read_text`, live on a heap that the runtime manages:
+
+* A value is reclaimed once the program can no longer reach it. Reaching means
+  holding it in a variable, a field, an array element, a function argument, or a
+  string that itself is reachable — the usual meaning of "in use".
+* A value that is still reachable is never reclaimed, so a program that has been
+  corrected for a use-after-free cannot appear to work and then fail later.
+* Reclamation is automatic and driven by allocation: a program that allocates
+  continuously is collected continuously, and a program that allocates nothing
+  performs no collection work at all. There is no background thread and no timer.
+* The cost is proportional to the memory that is still in use plus the memory
+  that was allocated, not to the size of the program's history.
+
+### 12.2 What this means for a program
+
+```gable
+fn main() -> i32 {
+  var total: i64 = 0;
+  for i in 0..1000000 {
+    let piece = str_of_i64(i as i64) + ",";  // a new string every iteration
+    total = total + piece.len;               // ...used once, then dropped
+  }
+  print(total);
+  return 0;
+}
+```
+
+The loop allocates a million strings. Peak memory does not grow with the number
+of iterations: each iteration's string stops being reachable when the next one is
+assigned, and is reclaimed. `tools/check-memory.sh` measures this: the workload
+in `tools/bench/temporaries.gable` allocates 1.6 GiB in total and peaks at about
+2.6 MiB.
+
+### 12.3 Limits a program can rely on
+
+* Reclamation is conservative: an integer that happens to equal the address of a
+  heap block keeps that block alive until the value is gone. Peak memory is
+  therefore the live set plus a bounded amount of pointer-shaped leftovers, not an
+  exact figure. It never goes the other way: a reachable value is never reclaimed.
+* Programs are single-threaded. Starting a thread would introduce a second stack
+  that the collector does not scan, so the language has no way to start one, and
+  adding concurrency requires extending the collector first (§15).
+* On a host that cannot report where the running thread's stack begins, the
+  runtime does not collect at all. The program behaves exactly as specified but
+  uses memory in proportion to what it allocated. Every host that CI builds on
+  collects.
+* Copying a value does not copy its memory: strings are a pointer and a length.
+  `+` allocates and copies both operands into a new block, so building a string of
+  length *n* one piece at a time costs *O(n²)* copying even though memory use
+  stays bounded. Growable containers and a string builder are the next step in
+  `docs/roadmap.md`.
 
 ## 13. Compiler diagnostics
 

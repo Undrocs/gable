@@ -99,6 +99,24 @@ std::uint64_t TypeTable::length(Type arrayType) const {
   return index < entries_.size() ? entries_[index].length : 0;
 }
 
+Type TypeTable::list(Type element) {
+  for (std::size_t i = 0; i < lists_.size(); ++i) {
+    if (lists_[i] == element) {
+      return Type::listType(static_cast<std::uint32_t>(i));
+    }
+  }
+  lists_.push_back(element);
+  return Type::listType(static_cast<std::uint32_t>(lists_.size() - 1));
+}
+
+Type TypeTable::listElement(Type type) const {
+  if (type.kind() != TypeKind::List) {
+    return Type::error();
+  }
+  const std::size_t index = type.index();
+  return index < lists_.size() ? lists_[index] : Type::error();
+}
+
 std::string typeName(Type type, const Module& module) {
   switch (type.kind()) {
     case TypeKind::Error: return "error";
@@ -125,6 +143,8 @@ std::string typeName(Type type, const Module& module) {
       return "[" + typeName(element, module) + "; " +
              std::to_string(module.types.length(type)) + "]";
     }
+    case TypeKind::List:
+      return "[" + typeName(module.types.listElement(type), module) + "]";
   }
   return "error";
 }

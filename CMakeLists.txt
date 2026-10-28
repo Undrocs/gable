@@ -65,6 +65,9 @@ endif()
 add_library(gable_runtime STATIC
   runtime/src/args.c
   runtime/src/fs.c
+  runtime/src/gc.c
+  runtime/src/list.c
+  runtime/src/stack_top.c
   runtime/src/io.c
   runtime/src/string.c
   runtime/src/trap.c
@@ -200,6 +203,20 @@ if(BUILD_TESTING)
     add_test(NAME runtime_files COMMAND fs_tests)
     set_tests_properties(runtime_files PROPERTIES TIMEOUT 120)
   endif()
+
+  # Memory reclamation is checked directly against the runtime: a Gable program
+  # can show that live values survive, but not that unreachable ones are freed.
+  add_executable(gc_tests runtime/tests/gc_tests.c)
+  target_link_libraries(gc_tests PRIVATE gable_runtime)
+  target_include_directories(gc_tests PRIVATE runtime/src)
+  add_test(NAME runtime_memory COMMAND gc_tests)
+  set_tests_properties(runtime_memory PROPERTIES TIMEOUT 120)
+
+  add_executable(list_tests runtime/tests/list_tests.c)
+  target_link_libraries(list_tests PRIVATE gable_runtime)
+  target_include_directories(list_tests PRIVATE runtime/src)
+  add_test(NAME runtime_lists COMMAND list_tests)
+  set_tests_properties(runtime_lists PROPERTIES TIMEOUT 120)
 
   add_executable(gable_integration_tests tests/integration/integration_tests.cpp)
   target_link_libraries(gable_integration_tests PRIVATE gable_compiler)

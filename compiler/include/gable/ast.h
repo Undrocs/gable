@@ -19,18 +19,21 @@ namespace gable::ast {
 /// A type as written in the source. Names are kept as written so that semantic
 /// analysis, not the parser, decides which type names exist.
 struct TypeSyntax {
-  enum class Kind { Named, Array };
+  /// Array is a fixed length, `[i32; 4]`; List is growable, `[i32]`.
+  enum class Kind { Named, Array, List };
 
   Kind kind = Kind::Named;
   SourceSpan span;
   /// Kind::Named
   std::string name;
-  /// Kind::Array, e.g. `[i32; 4]`
+  /// Kind::Array and Kind::List, e.g. `[i32; 4]` and `[i32]`
   std::unique_ptr<TypeSyntax> element;
   std::uint64_t arrayLength = 0;
   SourceSpan lengthSpan;
 
-  bool isValid() const { return kind == Kind::Array ? element != nullptr : !name.empty(); }
+  bool isValid() const {
+    return kind == Kind::Named ? !name.empty() : element != nullptr;
+  }
 };
 
 struct Expr {

@@ -39,19 +39,31 @@ Other presets: `release`, `asan` (AddressSanitizer and UndefinedBehaviorSanitize
 ctest --test-dir build/debug --output-on-failure
 ```
 
-Four CTest entries exist:
+Six CTest entries exist:
 
-* `unit` — 215 fast unit tests (lexer, parser, semantics including multi-file
+* `unit` — 232 fast unit tests (lexer, parser, semantics including multi-file
   programs, code generation, CLI, robustness).
 * `notes_tool` — builds `tools/notes` and drives it through its command line; this
   is the end-to-end test for a real multi-file program.
 * `runtime_files` — calls the runtime's file builtins from C, which is the only
   way to reach a NUL byte in a path or a file above the read limit. POSIX only;
   it is not registered on Windows.
+* `runtime_lists` — calls the runtime's list support from C:
+  growth, shared handles, element layout, and reclamation.
+* `runtime_memory` — checks that values reachable from the stack survive a
+  collection and that unreachable ones are reclaimed.
 * `integration` — compiles and runs every case under `tests/integration/cases`
   and every program under `examples/`, comparing stdout, exit status, and
   diagnostics. Some cases pass program arguments. It requires a working C
   compiler.
+
+Two further checks are scripts rather than CTest entries, and both need a POSIX
+host:
+
+```bash
+tools/check-memory.sh build/debug/gable          # bounded memory for 1.6 GiB of short-lived strings
+tools/measure-notes.sh build/debug/gable 20000   # timings of the notes tool on a large file
+```
 
 ## Compile and run a program
 
@@ -106,15 +118,6 @@ Program arguments follow `--` and are passed to the program `run` builds:
 ./build/debug/gable run tools/notes/notes.gable -- add "buy milk"
 ```
 
-`check` runs the front end and writes nothing; use it in editors and pre-commit
-hooks. Output paths are completed with `.exe` on Windows.
-
-Program arguments follow `--` and are passed to `gable run`'s program:
-
-```bash
-./build/debug/gable run tools/notes/notes.gable -- add "buy milk"
-```
-
 Exit statuses:
 
 | Status | Meaning |
@@ -126,7 +129,7 @@ Exit statuses:
 | other | for `run`, the executed program's exit status |
 
 A program terminated by a Gable runtime trap (integer division by zero, or an
-out-of-bounds array index) exits with status 70 and writes
+out-of-bounds array or list index) exits with status 70 and writes
 `gable: runtime error: ...` to standard error.
 
 ## Environment variables
@@ -170,6 +173,26 @@ contains complete programs:
 | `strings.gable` | concatenation, length, search, conversion |
 | `args.gable` | command-line arguments |
 | `tasks.gable` | arrays, `for` loops, conversions |
+| `lists.gable` | growable lists, append, iteration, lists of structs |
+
+Text that grows: a list collects pieces and `str_join` puts them together once.
+
+```gable
+fn main() -> i32 {
+    var names: [str] = [];
+    for field in str_split("ada|grace|alan", "|") {
+        list_push(names, str_trim(field));
+    }
+    print(names.len);       // 3
+    print(names[1]);        // grace
+    print(str_join(names, ", "));
+    return 0;
+}
+```
+
+Memory for strings and lists is reclaimed automatically; a program does not free
+anything (specification §12). `tools/check-memory.sh` measures it: a program that
+allocates 1.6 GiB in short-lived strings peaks at about 2.6 MiB.
 
 `tools/notes` is a larger program split across three files; it accepts arguments,
 keeps tasks in a text file, and has its own test suite. It saves through a

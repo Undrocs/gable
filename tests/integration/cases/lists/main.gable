@@ -1,0 +1,60 @@
+// Growable lists: append, index, write, length, and iteration, including lists
+// of structs and lists of lists.
+struct Item {
+    name: str,
+    count: i64,
+}
+
+fn add(items: [Item], name: str, count: i64) -> void {
+    list_push(items, Item(name, count));
+}
+
+fn names(items: [Item]) -> [str] {
+    var result: [str] = [];
+    for item in items {
+        list_push(result, item.name);
+    }
+    return result;
+}
+
+fn main() -> i32 {
+    var items: [Item] = [];
+    add(items, "bolts", 12);
+    add(items, "nuts", 30);
+
+    print(items.len);
+    print(items[0].name);
+    items[1].count = items[1].count + 1;
+    print(items[1].count);
+
+    var total: i64 = 0;
+    for item in items {
+        total = total + item.count;
+    }
+    print(total);
+
+    let labels = names(items);
+    for label in labels {
+        print(label);
+    }
+
+    // Growth: the list reallocates as it fills, and the contents survive.
+    var numbers: [i32] = [];
+    for i in 0..1000 {
+        list_push(numbers, i * 2);
+    }
+    print(numbers.len);
+    print(numbers[0]);
+    print(numbers[999]);
+
+    // Lists of lists.
+    var grid: [[i32]] = [];
+    list_push(grid, [1, 2]);
+    list_push(grid, [3]);
+    print(grid[1][0]);
+
+    // A list literal uses the type of the binding.
+    let fixed: [str] = ["x", "y"];
+    print(fixed.len);
+    return 0;
+}

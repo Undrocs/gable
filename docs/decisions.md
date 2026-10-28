@@ -389,3 +389,135 @@ other Windows toolchain is advertised.
 **Alternatives rejected.** (a) MinGW-only support: it is not the default toolchain
 users have. (b) Documenting WSL as the Windows story: it is not a native
 implementation and leaves the compiler untested on the platform it claims.
+
+---
+
+## 0021 — Memory is reclaimed by a conservative mark-and-sweep collector
+
+**Decision.** The runtime owns a heap for `str` values and for the buffers that
+`fs_read_text` returns. A mark-and-sweep collector traces from the machine stack
+and the callee-saved registers: a word is treated as a pointer when it falls
+inside a block the runtime allocated. Blocks that are not reached are freed.
+Collection runs during allocation, once the bytes allocated since the last cycle
+exceed a threshold of `max(1 MiB, 2 × live bytes)`. The generated entry point calls
+`gable_rt_init()` before anything else, which records where the thread's stack
+begins and arranges for the heap to be released at exit.
+
+**Why.** Programs needed to be able to run for longer than a handful of seconds
+without growing without bound, and doing so must not cost the language its
+simplicity: the memory model is what makes Gable teachable. A conservative
+collector keeps every guarantee the language already made — value semantics,
+immutability of `str`, no annotations — and adds reclamation underneath. The
+alternatives all change what the programmer has to know:
+
+* *Never reclaim* (the previous behaviour): correct, but memory grows with every
+  concatenation, which rules out the command-line tools the language targets.
+* *Reference counting*: needs a heap-allocated representation for every value that
+  can alias, adds an ownership question at every copy, cannot collect cycles, and
+  makes the cost of assignment visible in a language whose whole point is that
+  assignment is cheap and predictable.
+* *Ownership and borrowing*: a real answer, but it makes the first program a
+  beginner writes require a lifetime discussion, and it is a much larger change
+  than reclamation alone.
+* *Precise tracing with per-type maps*: exact rather than conservative, and it
+  would need type information for every stack slot, which the C backend cannot
+  express without changing how the whole backend passes values.
+
+Mark-and-sweep is also the only option here that keeps the existing C backend: the
+generated code stores values in ordinary C variables and struct fields, and the
+collector finds them by looking, so no generated code changed beyond one call.
+
+**Consequences.** Peak memory is the live set plus pointer-shaped leftovers on the
+stack, never less than the live set. A collection pauses the program while it
+scans the live heap, the stack, and the block table; the table is kept sorted so
+the scan is a binary search per word. The runtime must be single-threaded, which
+the language already is; concurrency will require per-thread stacks and a
+safepoint before it can be added. Heap memory is never freed by hand: the runtime
+and its tests allocate through `gable_rt_allocate` and drop references. On a host
+that cannot report the thread's stack bounds the collector stays off and memory is
+not reclaimed, which is safe and documented (specification §12.3).
+
+**Verification.** `runtime/tests/gc_tests.c` (15 checks) covers values surviving a
+collection, unreachable blocks being reclaimed, automatic collection under
+allocation pressure, interior pointers keeping their block alive, chains reachable
+only through the heap, and 200 000 short-lived allocations. `tools/check-memory.sh`
+runs a real compiled program that allocates 1.6 GiB and requires a peak under
+16 MiB. Both were checked against deliberately broken runtimes: skipping the root
+scan frees live values (the test crashes), and skipping collection grows the peak
+to 3.2 GiB (the script fails).
+
+**Rejected detail: deriving the stack top from a local variable.** The first
+implementation had the generated `main` pass the address of one of its own locals.
+That is not sound: the compiler may place locals above that address, and
+AddressSanitizer does, which made a live array of pointers invisible to the
+collector and a live block get freed. Each host is now asked for the thread's
+stack bounds (`pthread_getattr_np` on Linux, `pthread_get_stackaddr_np` on macOS,
+`GetCurrentThreadStackLimits` on Windows).
+
+---
+
+## 0022 — A list is a growable handle, not a value
+
+**Decision.** `[T]` is a growable list of `T`; `[T; N]` stays a fixed-length
+array. A list value is a handle to heap storage that holds the elements, their
+count, and their capacity. Copying a list copies the handle, so every copy sees
+the same elements, and `list_push(list, value)` is visible through every copy.
+Elements are bounds checked, `.len` is the count, and `for item in list` iterates.
+
+**Why.** Programs needed a collection that grows, and the task-list tool cannot be
+written honestly without one. The hard question is what happens when a list is
+assigned or passed. There were two coherent answers:
+
+* *A list is a value*: assignment copies the elements. Then `list_push(items, x)`
+  inside a function cannot be visible to the caller, which makes an append helper
+  impossible without returning a new list and reassigning it at every call site.
+  Copy-on-write would fix the visibility and make every call site pay a copy, and
+  the copy cost would be invisible in the source — the opposite of what this
+  language is for.
+* *A list is a handle*: appends are visible, passing a list is O(1), and the cost
+  of any line is visible where it is written.
+
+The second was chosen. It is the model a reader already knows from JavaScript
+arrays and Go slices, and it keeps Gable's rule that mutation appears in the
+source: elements change only where `list[i] = v` or `list_push` is written.
+
+**Consequences.** A `let` binding that holds a list does not freeze the elements;
+the specification says so in §6.1 and §6.6 instead of leaving it to be discovered.
+Two bindings can name the same list, so a function can change its caller's
+collection — deliberately, as with any in-place append. `.len` is read from the
+shared storage, so every handle agrees. A list that no handle names is reclaimed by
+the collector (ADR 0021), including its storage. Element types do not need
+generics: one implementation stores elements `stride` bytes apart and the compiler
+knows the element type, which is enough for `list_push`, indexing, and iteration.
+
+**Alternatives rejected.** (a) Value semantics with copy-on-write: invisible copies
+and a reference-count-like model without the benefits. (b) Requiring `var` for
+`list_push`: it would not actually prevent aliasing — a `[Task]` parameter can be
+appended to — so it would teach a rule that is not true. (c) Generics plus a single
+`List<T>`: the mechanism the directive defers until something needs it; a
+monomorphic `[T]` with a runtime element size is smaller and does the same work.
+(d) A separate `list_push` type per element type: more runtime surface for no
+benefit.
+
+**Measured.** `tools/notes` was rewritten on top of lists and `str_split`/
+`str_join`; its behaviour is unchanged (all 83 of its tests pass) and it shrank
+from 483 to 396 lines. Timing the same commands on a 20 000-task file with
+`tools/measure-notes.sh` on one Linux host:
+
+| Command | Line-at-a-time (`+` in a loop) | Lists and joins |
+| --- | --- | --- |
+| `list` | 4874 ms | 247 ms |
+| `done 1` | 7712 ms | 220 ms |
+| `remove 1` | — | 222 ms |
+
+The old version copied the remaining file for every line it processed, so the
+cost was quadratic in the number of tasks; the new one splits once, edits a list,
+and joins once. The numbers are wall-clock milliseconds including process
+start-up on that host, which is the same host for both builds.
+
+**Verification.** `runtime/tests/list_tests.c` covers growth across doublings,
+shared handles, element stride, and reclamation. The integration cases `lists`,
+`list_bounds_trap`, and `error_list_element_type` run real programs, `examples/
+lists.gable` is executed by the suite, and the unit tests cover parsing `[T]`,
+element type checking, and the generated C for appends, indexing, assignment
+through a list element, and iteration.
