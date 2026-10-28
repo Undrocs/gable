@@ -407,12 +407,17 @@ int main(int argc, char** argv) {
       worker.join();
     }
     int failedRuns = 0;
-    for (const Run& result : results) {
+    std::string detail;
+    for (std::size_t index = 0; index < results.size(); ++index) {
+      const Run& result = results[index];
       if (!result.started || result.exitCode != 0) {
         ++failedRuns;
+        detail += "\n    run " + std::to_string(index) + " exited " +
+                  std::to_string(result.exitCode) + ": " + result.err;
       }
     }
-    checkEqual(failedRuns, 0, "concurrent_add", "commands that failed to add a task");
+    check(failedRuns == 0, "concurrent_add",
+          "commands that failed to add a task: " + std::to_string(failedRuns) + detail);
     const std::string stored = tool.stored();
     int missing = 0;
     for (int worker = 0; worker < kWorkers; ++worker) {
