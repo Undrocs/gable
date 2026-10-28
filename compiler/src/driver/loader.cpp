@@ -24,6 +24,11 @@ constexpr std::uintmax_t kMaxSourceBytes = 64ull * 1024ull * 1024ull;
 /// twice). The count is of files the compilation has discovered, including the
 /// ones still being loaded, so a chain cannot slip past it.
 constexpr std::size_t kMaxSourceFiles = 512;
+/// How deeply imports may nest. Loading an import is recursive, so a chain of
+/// files that each import the next consumes stack proportional to its length;
+/// the file count alone does not keep the loader's stack bounded. Real programs
+/// nest a handful of levels, and a chain this deep is a mistake worth reporting.
+constexpr std::size_t kMaxImportDepth = 64;
 /// Total size of all sources of one compilation. Individual files are limited
 /// separately; this bounds the whole program, so a wide import graph cannot
 /// exhaust memory either.
@@ -118,6 +123,13 @@ class Loader {
     }
     if (isActive(canonical)) {
       reportCycle(canonical, importingFile, importSpan);
+      return true;
+    }
+    if (stack_.size() >= kMaxImportDepth) {
+      diagnostics_.error(importingFile, importSpan,
+                         "imports are nested more than " + std::to_string(kMaxImportDepth) +
+                             " levels deep; import the shared files from the root file "
+                             "instead of chaining imports");
       return true;
     }
     // Count what has been discovered, not only what has finished: a chain of

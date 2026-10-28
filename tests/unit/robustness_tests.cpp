@@ -237,11 +237,32 @@ GABLE_TEST(robustness_rejects_long_else_if_chains) {
 }
 
 GABLE_TEST(robustness_rejects_more_than_the_source_file_limit) {
-  // Every file imports the next, so the compilation discovers one more file at
-  // every step. The limit must count discovered files, not only the ones that
-  // finished loading, or a chain slips past it.
+  // One root file imports every other file, so the compilation discovers one
+  // more file per import without nesting. The limit must count discovered files,
+  // not only the ones that finished loading.
   std::map<std::string, std::string> files;
   constexpr int kFiles = 520;
+  std::string root;
+  for (int index = 0; index < kFiles; ++index) {
+    char name[32] = {};
+    std::snprintf(name, sizeof name, "f%05d.gable", index);
+    root += "import \"" + std::string(name) + "\";\n";
+    files[name] = "fn f" + std::to_string(index) + "() -> i32 { return 0; }\n";
+  }
+  files["main.gable"] = root + "fn main() -> i32 { return f0(); }\n";
+
+  const gabletest::Analysis analysis = gabletest::analyzeProject(files, "main.gable");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(gabletest::mentions(analysis, "more than 512 source files"));
+}
+
+// Loading an import recurses, so a chain of files that each import the next
+// spends stack proportional to its length. The file count allows 512 files, which
+// is more stack than a thread with a small stack has; the depth of the chain is
+// bounded on its own.
+GABLE_TEST(robustness_rejects_deeply_nested_import_chains) {
+  std::map<std::string, std::string> files;
+  constexpr int kFiles = 400;
   for (int index = 0; index < kFiles; ++index) {
     std::string text;
     if (index + 1 < kFiles) {
@@ -258,5 +279,5 @@ GABLE_TEST(robustness_rejects_more_than_the_source_file_limit) {
 
   const gabletest::Analysis analysis = gabletest::analyzeProject(files, "main.gable");
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(gabletest::mentions(analysis, "more than 512 source files"));
+  GABLE_CHECK(gabletest::mentions(analysis, "nested more than 64 levels deep"));
 }

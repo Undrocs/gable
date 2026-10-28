@@ -103,6 +103,9 @@ import "text.gable";
   struct declarations may refer to each other in any order and across files.
 * Two declarations with the same name, whether in one file or in different files,
   are an error. There is no per-file privacy and no package manager.
+* A compilation is limited to 512 source files, 64 MiB per file and 256 MiB in
+  total, and imports may be nested at most 64 levels deep. Exceeding any of these
+  is reported as an error rather than exhausting memory or the stack.
 
 ## 4. Declarations
 

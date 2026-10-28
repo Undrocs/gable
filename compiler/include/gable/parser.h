@@ -38,12 +38,11 @@ class Parser {
 
   bool depthExceeded(const char* context);
 
-  /// Reports a resource-limit error once and stops parsing when the limit is
-  /// reached. Used both for nesting depth and for the node budget.
+  /// Reports a resource-limit error once and returns true, meaning "stop".
   bool limitReached(SourceSpan span, std::string message);
 
-  /// Checks that an expression tree of `depth` levels is still within the limit,
-  /// reporting one diagnostic and stopping parsing when it is not.
+  /// True when an expression tree of `depth` levels is still within the limit;
+  /// otherwise reports the diagnostic once and returns false.
   bool growTreeDepth(int depth, SourceSpan span);
 
   /// Counts one syntax node against the per-file budget. Parsing stops with a

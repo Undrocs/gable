@@ -516,11 +516,19 @@ gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str
     return result;
   }
   if (!rename_os_file(temporary, path)) {
-    const int rename_error = errno;
+    /* errno is not set by MoveFileExW, so on Windows the failure is reported
+     * without a code the C library owns. Guessing from a stale errno would be
+     * worse than saying less. */
     remove_os_file(temporary);
+#if defined(_WIN32)
+    result.code = GABLE_RT_FILE_IO;
+    result.error = literal("cannot replace the file");
+#else
+    const int rename_error = errno;
     result.code = failure_code(rename_error);
     const char *text_message = strerror(rename_error);
     result.error = gable_rt_str_copy(text_message, (int64_t)strlen(text_message));
+#endif
     return result;
   }
 

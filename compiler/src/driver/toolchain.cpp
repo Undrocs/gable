@@ -360,11 +360,18 @@ BuildOutput buildExecutable(const std::string& sourcePath, const BuildOptions& o
     diagnostics << "gable: generated C retained at " << cPath << '\n';
     return output;
   }
-  if (!process.standardOutput.empty()) {
-    diagnostics << process.standardOutput;
-  }
+  // Standard error always goes through: on success it holds the C compiler's
+  // warnings, which a user needs in order to know what the generated code did.
   if (!process.standardError.empty()) {
     diagnostics << process.standardError;
+  }
+  // Standard output of the C compiler is progress chatter rather than a
+  // diagnostic: cl.exe prints the name of every source file it compiles. It is
+  // only forwarded when the run failed, where every line may explain the
+  // failure, or when the user asked for a verbose run.
+  if (!process.standardOutput.empty() &&
+      (options.verbose || !process.exitedNormally || process.exitCode != 0)) {
+    diagnostics << process.standardOutput;
   }
 
   if (!process.exitedNormally || process.exitCode != 0) {

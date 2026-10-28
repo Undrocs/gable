@@ -57,6 +57,9 @@ bool Parser::depthExceeded(const char* context) {
                                             std::to_string(kMaxNestingDepth) + " levels)");
 }
 
+/// Reports the limit once. The return value is always true, meaning "stop";
+/// callers that ask whether they may continue must negate it, which is why the
+/// three helpers below use explicit comparisons.
 bool Parser::limitReached(SourceSpan span, std::string message) {
   if (!depthLimitExceeded_) {
     depthLimitExceeded_ = true;
@@ -70,9 +73,10 @@ bool Parser::consumeNodeBudget() {
   if (nodeCount_ <= kMaxSyntaxNodes) {
     return true;
   }
-  return limitReached(current().span,
-                      "this file contains more than " + std::to_string(kMaxSyntaxNodes) +
-                          " syntax nodes; split it into smaller files");
+  limitReached(current().span, "this file contains more than " +
+                                   std::to_string(kMaxSyntaxNodes) +
+                                   " syntax nodes; split it into smaller files");
+  return false;
 }
 
 void Parser::error(SourceSpan span, std::string message) {
@@ -793,10 +797,10 @@ bool Parser::growTreeDepth(int depth, SourceSpan span) {
   if (depth <= kMaxNestingDepth) {
     return true;
   }
-  return limitReached(span, "expression is too large (limit " +
-                                std::to_string(kMaxNestingDepth) +
-                                " levels of operators and operands); split it into "
-                                "smaller statements");
+  limitReached(span, "expression is too large (limit " + std::to_string(kMaxNestingDepth) +
+                         " levels of operators and operands); split it into "
+                         "smaller statements");
+  return false;
 }
 
 ast::ExprPtr Parser::parsePrefix() {

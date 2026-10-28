@@ -18,7 +18,7 @@ please report it.
 | Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
 | Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
 | Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70 |
-| Testing | 211 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 79 runtime file tests, sanitizer configuration |
+| Testing | 214 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 79 runtime file tests, sanitizer configuration |
 
 ## Known bugs and rough edges
 
@@ -28,6 +28,9 @@ please report it.
 * **No dynamic arrays or maps.** Every array has a compile-time length. A program
   that needs an unbounded sequence has to read its input whole, as `tools/notes`
   does with the notes file, or keep a fixed-size buffer.
+* **Import nesting is capped at 64 levels.** Loading an import is recursive, and
+  the cap is what keeps the loader's stack bounded; a program that chains
+  imports deeper has to declare the shared files in the root file instead.
 * **Exit status ambiguity under `run`.** A program returning 1, 2, or 70 is
   indistinguishable from a compiler failure by exit status alone.
 * **No debug information for Gable source.** Debugging a generated executable means

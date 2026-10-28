@@ -618,3 +618,41 @@ GABLE_TEST(cli_extra_c_compiler_flags_reach_the_backend) {
   const Run succeeded = runCli({"build", source, "-o", output});
   GABLE_CHECK_EQ(0, succeeded.exitCode);
 }
+
+#if !defined(_WIN32)
+// The C compiler prints progress chatter (cl.exe prints the name of each source
+// file) on standard output. That is not a diagnostic, so a successful build must
+// not forward it: `gable build` writing to standard error on success is a bug that
+// only showed up on Windows, where the chatter comes from cl.exe.
+GABLE_TEST(cli_does_not_forward_c_compiler_stdout_on_success) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "quiet.gable", gabletest::kSimpleProgram());
+  const std::string output = directory.file("quiet-program");
+  const std::string wrapper = directory.file("chatty-cc.sh");
+  {
+    std::ofstream script(wrapper, std::ios::binary | std::ios::trunc);
+    script << "#!/bin/sh\n"
+              "printf 'chatty compiler banner\\n'\n"
+              "exec \"$GABLE_TEST_REAL_CC\" \"$@\"\n";
+  }
+  std::error_code ignored;
+  std::filesystem::permissions(wrapper,
+                               std::filesystem::perms::owner_exec |
+                                   std::filesystem::perms::owner_read |
+                                   std::filesystem::perms::owner_write,
+                               std::filesystem::perm_options::add, ignored);
+
+  const ScopedEnvironmentVariable compiler("GABLE_CC", wrapper.c_str());
+  const ScopedEnvironmentVariable realCompiler("GABLE_TEST_REAL_CC", "cc");
+  const Run run = runCli({"build", source, "-o", output});
+  GABLE_CHECK_EQ(0, run.exitCode);
+  GABLE_CHECK_EQ(std::string(""), run.err);
+  GABLE_CHECK(std::filesystem::exists(output + gable::platform::executableSuffix()));
+
+  // A verbose run does forward it, so the user can see what was run and what it
+  // printed.
+  const Run verbose = runCli({"build", source, "-o", output, "-v"});
+  GABLE_CHECK_EQ(0, verbose.exitCode);
+  GABLE_CHECK(verbose.err.find("chatty compiler banner") != std::string::npos);
+}
+#endif
