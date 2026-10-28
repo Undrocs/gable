@@ -198,7 +198,8 @@ static FILE *open_file(gable_str path, const char *mode, int32_t *code, gable_st
 
 /* Creates `path` exclusively and returns an open descriptor, or -1. It never
  * follows an existing file or symbolic link. */
-static int create_exclusive(gable_str path, int32_t *code, gable_str *message) {
+static int create_exclusive(gable_str path, int32_t *code, gable_str *message,
+                            int *error_number_out) {
   GableOsPath os;
   if (!path_to_os(path, &os, code, message)) {
     return -1;
@@ -212,6 +213,7 @@ static int create_exclusive(gable_str path, int32_t *code, gable_str *message) {
 #endif
   if (descriptor < 0) {
     const int error_number = errno;
+    *error_number_out = error_number;
     *code = failure_code(error_number);
     const char *text = strerror(error_number);
     *message = gable_rt_str_copy(text, (int64_t)strlen(text));
@@ -528,13 +530,15 @@ gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str
       result.error = literal("file path is too long");
       return result;
     }
-    descriptor = create_exclusive(temporary, &code, &message);
-    /* When the name is taken the path exists and another counter value is
-     * worth trying; when it is not, creation failed for a reason that would
-     * repeat. Windows reports a name that another process has open as an access
-     * denial rather than a collision, so the question is asked of the file
-     * system instead of the error number. */
-    if (descriptor < 0 && file_age_seconds(temporary) < 0) {
+    int error_number = 0;
+    descriptor = create_exclusive(temporary, &code, &message, &error_number);
+    /* A name is taken if the file system says the path exists, or if the
+     * creation failed because it does: the two together also cover the case
+     * where the file disappeared between the attempt and the check. Windows
+     * reports a name that another process has open as an access denial rather
+     * than a collision, which is why the question is asked of the file system as
+     * well as of the error number. */
+    if (descriptor < 0 && error_number != EEXIST && file_age_seconds(temporary) < 0) {
       result.code = code;
       result.error = message;
       return result;
@@ -604,7 +608,8 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
   }
 
   for (int attempt = 0; attempt < GABLE_RT_LOCK_ATTEMPTS; ++attempt) {
-    const int descriptor = create_exclusive(lockPath, &code, &message);
+    int error_number = 0;
+    const int descriptor = create_exclusive(lockPath, &code, &message, &error_number);
     if (descriptor >= 0) {
       char owner[32];
       const int length = snprintf(owner, sizeof(owner), "%lu\n", process_id_value());
@@ -615,16 +620,22 @@ gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path) {
       result.ok = true;
       return result;
     }
-    /* Deciding whether this is contention by the error number would be wrong on
-     * Windows, where a lock file that another process has open cannot be created
-     * exclusively either and the attempt fails with an access denial. A lock file
-     * that exists means contention; one that does not means the creation failed
-     * for a reason that retrying cannot fix. */
+    /* Contention means the lock file exists, or that the creation failed with
+     * "already exists" and the holder released it again before this check. On
+     * Windows a lock file another process has open cannot be created
+     * exclusively either, and the attempt fails with an access denial rather
+     * than a collision, which is why the file system is asked as well. Anything
+     * else - a directory that cannot be written, an invalid path - would fail
+     * the same way on every attempt, so it is reported at once. */
     const int64_t age = file_age_seconds(lockPath);
-    if (age < 0) {
+    const bool contention = age >= 0 || error_number == EEXIST;
+    if (!contention) {
       result.code = code;
       result.error = message;
       return result;
+    }
+    if (age < 0) {
+      continue;  /* the holder released it while this attempt was failing */
     }
     if (age >= GABLE_RT_LOCK_STALE_SECONDS) {
       if (!remove_os_file_retrying(lockPath)) {

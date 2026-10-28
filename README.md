@@ -49,7 +49,7 @@ Hello from Gable!
 * `gable build`, `gable run`, and `gable check`, with defined exit statuses and
   atomic, input-safe output handling.
 * 215 unit tests, 58 end-to-end cases, 10 example programs, 83 acceptance tests
-  for the notes tool, and 79 runtime file tests — run in Debug, Release, and
+  for the notes tool, and 82 runtime file tests — run in Debug, Release, and
   AddressSanitizer/UBSan configurations.
 
 ## Platform support

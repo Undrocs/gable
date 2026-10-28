@@ -18,7 +18,7 @@ please report it.
 | Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
 | Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
 | Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70 |
-| Testing | 215 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 79 runtime file tests, sanitizer configuration |
+| Testing | 215 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 82 runtime file tests, sanitizer configuration |
 
 ## Known bugs and rough edges
 

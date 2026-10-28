@@ -362,6 +362,56 @@ static void test_locking(const char* scratch) {
   checkCode(gable_rt_fs_unlock(file).code, GABLE_RT_FILE_OK, "cross_process_unlock");
 }
 
+/* Several processes take and release the same lock over and over. Every
+ * acquisition must eventually succeed: a holder that releases the lock between
+ * another process's failed attempt and its next look must not turn into an
+ * error, which is exactly what happened when the retry decision was made from
+ * the error number alone. */
+static void test_concurrent_locking(const char* scratch) {
+  char path[4096];
+  const gable_str file = path_in(scratch, "shared.txt", path, sizeof(path));
+#define GABLE_TEST_LOCK_PROCESSES 4
+#define GABLE_TEST_LOCK_ITERATIONS 25
+  const int kProcesses = GABLE_TEST_LOCK_PROCESSES;
+  const int kIterations = GABLE_TEST_LOCK_ITERATIONS;
+  pid_t children[kProcesses];
+  int started = 0;
+  for (int index = 0; index < kProcesses; ++index) {
+    const pid_t child = fork();
+    if (child < 0) {
+      fail("concurrent_lock", "cannot fork");
+      break;
+    }
+    if (child == 0) {
+      for (int iteration = 0; iteration < kIterations; ++iteration) {
+        if (!gable_rt_fs_lock(file).ok) {
+          _exit(10);
+        }
+        if (!gable_rt_fs_unlock(file).ok) {
+          _exit(11);
+        }
+      }
+      _exit(0);
+    }
+    children[started] = child;
+    ++started;
+  }
+  int failuresSeen = 0;
+  for (int index = 0; index < started; ++index) {
+    int status = 0;
+    if (waitpid(children[index], &status, 0) < 0 || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0) {
+      ++failuresSeen;
+    }
+  }
+  check(started == kProcesses, "concurrent_lock", "not every helper process started");
+  check(failuresSeen == 0, "concurrent_lock",
+        "a process could not take the lock while another one held it");
+  char lock_path[4096];
+  path_in(scratch, "shared.txt.lock", lock_path, sizeof(lock_path));
+  check(!file_exists(lock_path), "concurrent_lock", "the lock file was left behind");
+}
+
 static void test_oversized_file(const char* scratch) {
   char path[4096];
   path_in(scratch, "large.txt", path, sizeof(path));
@@ -416,6 +466,7 @@ int main(void) {
   test_missing_and_permission(scratch);
   test_atomic_write(scratch);
   test_locking(scratch);
+  test_concurrent_locking(scratch);
   test_oversized_file(scratch);
 
   remove_scratch_directory(scratch);
