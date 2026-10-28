@@ -529,6 +529,8 @@ reserved.
 | `str_slice(text, start, length)` | `str, i32, i32 -> SliceResult` | copies a byte range |
 | `str_trim(text)` | `str -> str` | removes leading and trailing ASCII whitespace (space, tab, newline, carriage return, vertical tab, form feed; not other Unicode spaces) |
 | `list_push(list, value)` | `[T], T -> void` | appends `value` to `list` (§6.6) |
+| `str_split(text, separator)` | `str, str -> [str]` | cuts `text` at every `separator`; an empty separator cuts between bytes |
+| `str_join(parts, separator)` | `[str], str -> str` | concatenates `parts` with `separator` between them |
 
 The result types are ordinary structs declared by the prelude, so their fields
 are read like any other struct:
@@ -560,6 +562,11 @@ the NUL: `"dir/file\0.orig"` and `"dir/file"` name the same file to the operatin
 system, so accepting the first would let a program written to preserve the second
 overwrite it. Gable strings may still contain NUL bytes; only path arguments are
 restricted this way.
+
+`str_split` copies each piece, so the pieces stay valid after the text they came
+from is gone, and `str_join` allocates the result once. Together they are how a
+program turns a file into fields and fields back into a file: appending with `+`
+in a loop copies the whole text on every step.
 
 `fs_read_text` reads at most 64 MiB and rejects larger files.
 

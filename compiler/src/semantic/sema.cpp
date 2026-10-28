@@ -269,6 +269,10 @@ void SemanticAnalyzer::registerBuiltins() {
       {"str_find", ir::Builtin::Find, preludeStruct("FindResult"), {str, str}},
       {"str_slice", ir::Builtin::Slice, preludeStruct("SliceResult"), {str, i32, i32}},
       {"str_trim", ir::Builtin::Trim, str, {str}},
+      // Splitting and joining are what makes a list of strings useful: reading
+      // input into fields, and building output without repeated concatenation.
+      {"str_split", ir::Builtin::Split, module_->types.list(str), {str, str}},
+      {"str_join", ir::Builtin::Join, str, {module_->types.list(str), str}},
   };
 }
 
@@ -550,6 +554,16 @@ ir::ExprPtr SemanticAnalyzer::checkLvalue(const ast::Expr& expr) {
       return access;
     }
     case ast::Expr::Kind::Index: {
+      // A list element lives in the list's shared storage, so assigning to it
+      // changes the list rather than the binding that names the list. It is
+      // therefore allowed through a `let` binding and through a parameter, for
+      // the same reason `list_push` accepts a list parameter.
+      if (expr.lhs) {
+        ir::ExprPtr listBase = checkExpr(*expr.lhs, std::nullopt);
+        if (listBase->type.kind() == ir::TypeKind::List) {
+          return checkIndex(expr);
+        }
+      }
       ir::ExprPtr base = checkLvalue(*expr.lhs);
       if (!base) {
         return nullptr;

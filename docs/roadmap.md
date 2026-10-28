@@ -96,8 +96,8 @@ Each item requires a specification update, implementation, and tests before it i
 merged.
 
 * Maps and sets on top of the runtime heap.
-* A string builder, and joining a list of strings, so building a string of length
-  *n* costs *O(n)* rather than *O(n²)*.
+* A string builder for repeated appends (`str_join` already covers collecting
+  pieces into a list, so what is missing is the streaming case).
 * Character-level text operations and formatting.
 * Enums, tuples, and a sum type for error handling.
 * Bitwise and shift operators.

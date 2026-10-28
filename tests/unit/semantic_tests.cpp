@@ -850,3 +850,26 @@ GABLE_TEST(sema_reports_the_type_of_a_list_in_messages) {
   GABLE_CHECK(mentions(analysis, "'[str]'"));
   GABLE_CHECK(mentions(analysis, "for item in values"));
 }
+
+GABLE_TEST(sema_types_split_and_join) {
+  GABLE_CHECK(analyze(inMain(
+                   "  let parts = str_split(\"a,b\", \",\");\n"
+                   "  print(parts.len);\n"
+                   "  print(parts[0]);\n"
+                   "  print(str_join(parts, \"-\"));\n"
+                   "  return 0;"))
+                   .ok());
+}
+
+GABLE_TEST(sema_rejects_joining_numbers) {
+  const auto analysis = analyze(inMain("  let numbers: [i64] = [];\n  print(str_join(numbers, \",\"));\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "argument 1 of 'str_join'"));
+  GABLE_CHECK(mentions(analysis, "'[str]'"));
+}
+
+GABLE_TEST(sema_rejects_splitting_a_non_string) {
+  const auto analysis = analyze(inMain("  print(str_split(1, \",\"));\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "argument 1 of 'str_split'"));
+}

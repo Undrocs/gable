@@ -10,6 +10,11 @@
 
 import "storage.gable";
 
+/// More tasks than this is treated as a file this tool should not rewrite.
+fn max_tasks() -> i64 {
+    return 100000;
+}
+
 fn print_usage() -> void {
     eprint("usage: notes [--file <path>] <command> [arguments]");
     eprint("");
@@ -29,7 +34,7 @@ fn report_storage_error(prefix: str, error: str) -> void {
     return;
 }
 
-fn parse_number(text: str) -> i32 {
+fn parse_number(text: str) -> i64 {
     let parsed = parse_i64(text);
     if !parsed.ok {
         return 0;
@@ -37,41 +42,39 @@ fn parse_number(text: str) -> i32 {
     if parsed.value < 1 || parsed.value > 1000000 {
         return 0;
     }
-    return parsed.value as i32;
+    return parsed.value;
 }
 
-fn list_tasks(content: str) -> i32 {
-    var rest: str = content;
-    var index: i32 = 0;
-    while rest.len > 0 {
-        let split = take_line(rest);
-        if !split.hasLine {
-            break;
-        }
-        rest = split.rest;
-        if split.line.len == 0 {
-            continue;
-        }
-        index = index + 1;
-        print(render_line(index, parse_task(split.line)));
-    }
-    if index == 0 {
+fn list_tasks(tasks: [Task]) -> i32 {
+    if tasks.len == 0 {
         print("no tasks");
+        return 0;
+    }
+    var index: i32 = 1;
+    for task in tasks {
+        print(render_line(index, task));
+        index = index + 1;
     }
     return 0;
 }
 
-/// Loads the file and checks that every line is a well-formed task. A missing
-/// file is an empty list.
-fn load_for_reading(path: str) -> LoadResult {
-    let loaded = load_notes(path);
-    if !loaded.ok {
-        return loaded;
+/// Returns `tasks` with the task at one-based `target` marked done.
+fn mark_done(tasks: [Task], target: i64) -> void {
+    tasks[target - 1].done = true;
+    return;
+}
+
+/// Returns `tasks` without the task at one-based `target`.
+fn without_task(tasks: [Task], target: i64) -> [Task] {
+    var kept: [Task] = [];
+    var index: i64 = 1;
+    for task in tasks {
+        if index != target {
+            list_push(kept, task);
+        }
+        index = index + 1;
     }
-    if !is_valid_content(loaded.content) {
-        return LoadResult(false, "", "it contains a line that is not a task");
-    }
-    return loaded;
+    return kept;
 }
 
 /// Performs one mutating command while the lock is held and returns the exit
@@ -88,14 +91,14 @@ fn run_mutation(path: str, command: str, argument: str) -> i32 {
         }
     }
 
-    let loaded = load_for_reading(path);
+    let loaded = load_notes(path);
     if !loaded.ok {
         report_storage_error("cannot read the notes file", loaded.error);
         return 2;
     }
 
     if command == "clear" {
-        let error = save_notes(path, "");
+        let error = save_notes(path, []);
         if error.len > 0 {
             report_storage_error("cannot write the notes file", error);
             return 2;
@@ -104,12 +107,14 @@ fn run_mutation(path: str, command: str, argument: str) -> i32 {
         return 0;
     }
 
+    var tasks: [Task] = loaded.tasks;
     if command == "add" {
-        if loaded.content.len > 1000000 {
+        if tasks.len >= max_tasks() {
             eprint("notes: the notes file is too large for this tool");
             return 2;
         }
-        let error = save_notes(path, append_task(loaded.content, argument));
+        list_push(tasks, Task(false, argument));
+        let error = save_notes(path, tasks);
         if error.len > 0 {
             report_storage_error("cannot write the notes file", error);
             return 2;
@@ -118,18 +123,18 @@ fn run_mutation(path: str, command: str, argument: str) -> i32 {
         return 0;
     }
 
+    // Both remaining commands name a task by its one-based position.
     let target = parse_number(argument);
-    var rewrite: Rewrite = Rewrite("", false);
-    if command == "done" {
-        rewrite = mark_done(loaded.content, target);
-    } else {
-        rewrite = drop_task(loaded.content, target);
-    }
-    if !rewrite.found {
-        eprint("notes: no task numbered " + str_of_i64(target as i64));
+    if target > tasks.len {
+        eprint("notes: no task numbered " + str_of_i64(target));
         return 3;
     }
-    let error = save_notes(path, rewrite.content);
+    if command == "done" {
+        mark_done(tasks, target);
+    } else {
+        tasks = without_task(tasks, target);
+    }
+    let error = save_notes(path, tasks);
     if error.len > 0 {
         report_storage_error("cannot write the notes file", error);
         return 2;
@@ -189,12 +194,12 @@ fn main() -> i32 {
     if command == "list" {
         // Listing only reads, and the file is replaced atomically, so a reader
         // never sees a partial write and needs no lock.
-        let loaded = load_for_reading(path);
+        let loaded = load_notes(path);
         if !loaded.ok {
             report_storage_error("cannot read the notes file", loaded.error);
             return 2;
         }
-        return list_tasks(loaded.content);
+        return list_tasks(loaded.tasks);
     }
 
     if command != "add" && command != "done" && command != "remove" && command != "clear" {

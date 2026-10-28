@@ -499,6 +499,22 @@ monomorphic `[T]` with a runtime element size is smaller and does the same work.
 (d) A separate `list_push` type per element type: more runtime surface for no
 benefit.
 
+**Measured.** `tools/notes` was rewritten on top of lists and `str_split`/
+`str_join`; its behaviour is unchanged (all 83 of its tests pass) and it shrank
+from 483 to 396 lines. Timing the same commands on a 20 000-task file with
+`tools/measure-notes.sh` on one Linux host:
+
+| Command | Line-at-a-time (`+` in a loop) | Lists and joins |
+| --- | --- | --- |
+| `list` | 4874 ms | 247 ms |
+| `done 1` | 7712 ms | 220 ms |
+| `remove 1` | — | 222 ms |
+
+The old version copied the remaining file for every line it processed, so the
+cost was quadratic in the number of tasks; the new one splits once, edits a list,
+and joins once. The numbers are wall-clock milliseconds including process
+start-up on that host, which is the same host for both builds.
+
 **Verification.** `runtime/tests/list_tests.c` covers growth across doublings,
 shared handles, element stride, and reclamation. The integration cases `lists`,
 `list_bounds_trap`, and `error_list_element_type` run real programs, `examples/

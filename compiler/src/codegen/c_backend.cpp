@@ -636,6 +636,10 @@ class CEmitter {
         return sequence(value("gable_rt_str_slice(" + joined() + ")", false), expr.type, pre);
       case ir::Builtin::Trim:
         return sequence(value("gable_rt_str_trim(" + joined() + ")", false), expr.type, pre);
+      case ir::Builtin::Split:
+        return sequence(value("gable_rt_str_split(" + joined() + ")", false), expr.type, pre);
+      case ir::Builtin::Join:
+        return sequence(value("gable_rt_str_join(" + joined() + ")", false), expr.type, pre);
       case ir::Builtin::ListPush: {
         // `arguments` holds a materialized value for each argument, so the list
         // handle is copied once and the appended element is a temporary that the

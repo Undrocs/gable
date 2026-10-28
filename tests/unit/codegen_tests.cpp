@@ -438,3 +438,14 @@ GABLE_TEST(codegen_iterates_lists_with_a_snapshot_length) {
   GABLE_CHECK(contains(c, "gable_rt_list_len("));
   GABLE_CHECK(contains(c, "for (int64_t"));
 }
+
+GABLE_TEST(codegen_calls_the_split_and_join_helpers) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let parts = str_split(\"a,b\", \",\");\n"
+      "  print(str_join(parts, \"-\"));\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_str_split("));
+  GABLE_CHECK(contains(c, "gable_rt_str_join("));
+}

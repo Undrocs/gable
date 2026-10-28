@@ -187,6 +187,13 @@ void gable_rt_list_push(gable_list list, const void *element);
 void *gable_rt_list_at(gable_list list, int64_t index);
 int64_t gable_rt_list_len(gable_list list);
 
+/* Splits `text` at every occurrence of `separator`, returning the pieces as a
+ * list of strings. An empty separator splits between every byte. Pieces are
+ * copies, so they stay valid after the input is gone. */
+gable_list gable_rt_str_split(gable_str text, gable_str separator);
+/* Joins `parts` with `separator` between them. The result is a new string. */
+gable_str gable_rt_str_join(gable_list parts, gable_str separator);
+
 /* Strings. Concatenation allocates and the result lives until the process
  * exits: Gable v0.2 has no memory reclamation (docs/specification.md). */
 bool gable_rt_str_eq(gable_str lhs, gable_str rhs);

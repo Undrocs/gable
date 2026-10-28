@@ -4,9 +4,9 @@
 // tab, and the title. Titles may not contain tabs or line breaks, which keeps
 // the format unambiguous without an escaping mechanism.
 //
-// Gable v0.2 has no dynamic arrays, so the tool never holds the whole list in
-// memory. Every command streams over the file contents with take_line and
-// rewrites the parts it keeps.
+// The whole file is parsed into a list of tasks before a command runs, and a
+// command writes the list back with str_join. Reading and writing are one pass
+// over the tasks; nothing is copied per line.
 
 import "text.gable";
 
@@ -17,7 +17,7 @@ struct Task {
 
 struct LoadResult {
     ok: bool,
-    content: str,
+    tasks: [Task],
     error: str,
 }
 
@@ -31,23 +31,62 @@ fn file_code_busy() -> i32 {
     return 6;
 }
 
+/// Parses file contents into tasks. A trailing line break ends the file instead
+/// of producing an empty task, and an empty file has no tasks.
+fn parse_content(content: str) -> LoadResult {
+    var tasks: [Task] = [];
+    for line in str_split(content, "\n") {
+        if line.len == 0 {
+            continue;
+        }
+        let stored = parse_stored(line);
+        if !stored.valid {
+            return LoadResult(false, tasks, "it contains a line that is not a task");
+        }
+        list_push(tasks, Task(stored.done, stored.title));
+    }
+    return LoadResult(true, tasks, "");
+}
+
 /// Reads the notes file. A missing file is not an error: it means there are no
 /// tasks yet, and the first `add` creates it.
 fn load_notes(path: str) -> LoadResult {
     let read = fs_read_text(path);
     if read.ok {
-        return LoadResult(true, read.text, "");
+        return parse_content(read.text);
     }
     if read.code == file_code_not_found() {
-        return LoadResult(true, "", "");
+        return LoadResult(true, [], "");
     }
-    return LoadResult(false, "", read.error + " (code " + str_of_i64(read.code as i64) + ")");
+    return LoadResult(false, [], read.error + " (code " + str_of_i64(read.code as i64) + ")");
+}
+
+/// One stored line for `task`, without its line break.
+fn render_stored(task: Task) -> str {
+    var flag: str = "0";
+    if task.done {
+        flag = "1";
+    }
+    return flag + "\t" + task.title;
+}
+
+/// The whole file contents for `tasks`. Joining allocates the result once, so
+/// saving does not copy the file again for every task.
+fn render_content(tasks: [Task]) -> str {
+    var lines: [str] = [];
+    for task in tasks {
+        list_push(lines, render_stored(task));
+    }
+    if lines.len == 0 {
+        return "";
+    }
+    return str_join(lines, "\n") + "\n";
 }
 
 /// Saves the notes file through a temporary file that replaces the old one in a
 /// single step, so an interrupted or failing save leaves the previous contents.
-fn save_notes(path: str, content: str) -> str {
-    let written = fs_write_text_atomic(path, content);
+fn save_notes(path: str, tasks: [Task]) -> str {
+    let written = fs_write_text_atomic(path, render_content(tasks));
     if !written.ok {
         return written.error + " (code " + str_of_i64(written.code as i64) + ")";
     }
@@ -75,120 +114,10 @@ fn unlock_notes(path: str) -> str {
     return "";
 }
 
-fn render_stored(task: Task) -> str {
-    if task.done {
-        return "1\t" + task.title + "\n";
-    }
-    return "0\t" + task.title + "\n";
-}
-
 fn render_line(index: i32, task: Task) -> str {
     var mark: str = "[ ]";
     if task.done {
         mark = "[x]";
     }
     return str_of_i64(index as i64) + ". " + mark + " " + task.title;
-}
-
-/// True when every non-empty line of `content` is a well-formed task line.
-fn is_valid_content(content: str) -> bool {
-    var rest: str = content;
-    while rest.len > 0 {
-        let split = take_line(rest);
-        if !split.hasLine {
-            return false;
-        }
-        rest = split.rest;
-        if split.line.len == 0 {
-            continue;
-        }
-        if !take_stored_task(split.line).valid {
-            return false;
-        }
-    }
-    return true;
-}
-
-fn append_task(content: str, title: str) -> str {
-    return content + render_stored(Task(false, title));
-}
-
-struct Rewrite {
-    content: str,
-    found: bool,
-}
-
-/// Copies `content` into a new string, marking the task at one-based `target`
-/// as done.
-fn mark_done(content: str, target: i32) -> Rewrite {
-    var result: str = "";
-    var rest: str = content;
-    var index: i32 = 0;
-    var found: bool = false;
-
-    while rest.len > 0 {
-        let split = take_line(rest);
-        if !split.hasLine {
-            break;
-        }
-        rest = split.rest;
-        if split.line.len == 0 {
-            continue;
-        }
-        index = index + 1;
-        var task = parse_task(split.line);
-        if index == target {
-            task.done = true;
-            found = true;
-        }
-        result = result + render_stored(task);
-    }
-    return Rewrite(result, found);
-}
-
-/// Copies `content` into a new string, dropping the task at one-based `target`.
-fn drop_task(content: str, target: i32) -> Rewrite {
-    var result: str = "";
-    var rest: str = content;
-    var index: i32 = 0;
-    var found: bool = false;
-
-    while rest.len > 0 {
-        let split = take_line(rest);
-        if !split.hasLine {
-            break;
-        }
-        rest = split.rest;
-        if split.line.len == 0 {
-            continue;
-        }
-        index = index + 1;
-        if index == target {
-            found = true;
-            continue;
-        }
-        result = result + split.line + "\n";
-    }
-    return Rewrite(result, found);
-}
-
-fn parse_task(text: str) -> Task {
-    let stored = take_stored_task(text);
-    if !stored.valid {
-        return Task(false, "");
-    }
-    return Task(stored.done, stored.title);
-}
-
-fn is_valid_title(title: str) -> bool {
-    if title.len == 0 {
-        return false;
-    }
-    if str_find(title, "\t").ok {
-        return false;
-    }
-    if str_find(title, "\n").ok {
-        return false;
-    }
-    return true;
 }

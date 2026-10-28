@@ -58,6 +58,8 @@ enum class Builtin {
   Slice,
   Trim,
   ListPush,
+  Split,
+  Join,
 };
 
 class Type {

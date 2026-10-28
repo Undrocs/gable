@@ -1,6 +1,7 @@
 /* Gable runtime -- string operations. */
 #include "gable/rt.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -177,4 +178,79 @@ gable_str gable_rt_str_trim(gable_str text) {
   /* Trimming always copies, so the result never aliases a caller's buffer that
    * may be modified afterwards. */
   return gable_rt_str_copy(text.data + begin, end - begin);
+}
+
+/* Finds `needle` in the bytes [start, end) of `text`, or -1. */
+static int64_t find_from(gable_str text, gable_str needle, int64_t start) {
+  if (needle.len <= 0 || needle.len > text.len) {
+    return -1;
+  }
+  for (int64_t index = start; index + needle.len <= text.len; ++index) {
+    if (memcmp(text.data + index, needle.data, (size_t)needle.len) == 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+gable_list gable_rt_str_split(gable_str text, gable_str separator) {
+  gable_list parts = gable_rt_list_new((int64_t)sizeof(gable_str));
+  if (separator.len == 0) {
+    for (int64_t index = 0; index < text.len; ++index) {
+      const gable_str piece = gable_rt_str_copy(text.data + index, 1);
+      gable_rt_list_push(parts, &piece);
+    }
+    return parts;
+  }
+  int64_t start = 0;
+  for (;;) {
+    const int64_t found = find_from(text, separator, start);
+    if (found < 0) {
+      const gable_str piece = gable_rt_str_copy(text.data == NULL ? NULL : text.data + start,
+                                                text.len - start);
+      gable_rt_list_push(parts, &piece);
+      return parts;
+    }
+    const gable_str piece = gable_rt_str_copy(text.data + start, found - start);
+    gable_rt_list_push(parts, &piece);
+    start = found + separator.len;
+  }
+}
+
+gable_str gable_rt_str_join(gable_list parts, gable_str separator) {
+  const int64_t count = gable_rt_list_len(parts);
+  int64_t total = 0;
+  for (int64_t index = 0; index < count; ++index) {
+    gable_str piece;
+    memcpy(&piece, gable_rt_list_at(parts, index), sizeof piece);
+    if (piece.len < 0 || total > INT64_MAX - piece.len) {
+      gable_rt_trap("joined text is too large");
+    }
+    total += piece.len;
+    if (index != 0 && total > INT64_MAX - separator.len) {
+      gable_rt_trap("joined text is too large");
+    }
+    if (index != 0) {
+      total += separator.len;
+    }
+  }
+
+  char *buffer = (char *)gable_rt_allocate(total == 0 ? 1 : (size_t)total);
+  int64_t offset = 0;
+  for (int64_t index = 0; index < count; ++index) {
+    gable_str piece;
+    memcpy(&piece, gable_rt_list_at(parts, index), sizeof piece);
+    if (index != 0 && separator.len > 0) {
+      memcpy(buffer + offset, separator.data, (size_t)separator.len);
+      offset += separator.len;
+    }
+    if (piece.len > 0) {
+      memcpy(buffer + offset, piece.data, (size_t)piece.len);
+      offset += piece.len;
+    }
+  }
+  gable_str result;
+  result.data = buffer;
+  result.len = offset;
+  return result;
 }
