@@ -164,9 +164,11 @@ static void test_string_growth_survives_collection(void) {
     }
   }
   check(intact, "string_growth", "the retained string was overwritten");
-  /* The two thousand intermediates must be gone, leaving the 6000-byte result
-   * and little else. */
-  checkBelow(gable_rt_gc_stats().live_bytes, 64 * 1024, "string_growth",
+  /* The two thousand intermediates (about 18 MB in total) must be gone, leaving
+   * the 6000-byte result and whatever stale pointer-shaped words the optimiser
+   * left on the stack. The bound is generous on purpose: a conservative
+   * collector may keep a few blocks, but it cannot keep eighteen megabytes. */
+  checkBelow(gable_rt_gc_stats().live_bytes, 256 * 1024, "string_growth",
              "live bytes after building one long string");
 }
 

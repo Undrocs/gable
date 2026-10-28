@@ -73,7 +73,15 @@ typedef union GableHeapHeader {
     size_t size; /* payload bytes */
     size_t mark; /* 1 while the block is reachable in the current cycle */
   } fields;
-  max_align_t alignment;
+  /* The payload starts after this header, so the union forces it to be aligned
+   * for every kind of value the language stores. `max_align_t` would say this in
+   * one word, but MSVC does not provide it in C mode, and these members cover the
+   * same requirement: pointers, the widest integer, and the widest floating type
+   * the host has. */
+  void *as_pointer;
+  int64_t as_integer;
+  uint64_t as_unsigned;
+  long double as_long_double;
 } GableHeapHeader;
 
 /* Live blocks, sorted by address so that a candidate pointer can be resolved
