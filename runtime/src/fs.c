@@ -399,7 +399,8 @@ gable_rt_FileReadResult gable_rt_fs_read_text(gable_str path) {
   const bool failed = ferror(file) != 0;
   fclose(file);
   if (failed || read != (size_t)size) {
-    free(buffer);
+    /* Heap memory is reclaimed by the collector, never by the caller; the failed
+     * buffer becomes garbage as soon as this frame is gone. */
     result.code = GABLE_RT_FILE_IO;
     result.error = literal("cannot read file");
     return result;

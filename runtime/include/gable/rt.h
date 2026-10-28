@@ -80,6 +80,12 @@ typedef struct {
 #define GABLE_RT_FILE_IO 5
 #define GABLE_RT_FILE_BUSY 6
 
+/* Prepares the runtime before a Gable program runs; the generated entry point
+ * calls this first. It records where the running thread's stack begins, so the
+ * collector can find the values that are still in use, and arranges for the
+ * runtime's memory to be released at exit (docs/specification.md, "Memory"). */
+void gable_rt_init(void);
+
 /* Building strings from a literal that the compiler stores in the binary. */
 gable_str gable_rt_str(const char *data, int64_t len);
 

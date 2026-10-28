@@ -17,14 +17,17 @@ please report it.
 | Code generation | typed IR to C17, explicit left-to-right evaluation order with short-circuiting preserved, wrapping arithmetic, runtime division helpers, bounds checks, array wrapper structs, dependency-ordered struct typedefs, `--emit-c` |
 | Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
 | Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
-| Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70 |
-| Testing | 215 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 82 runtime file tests, sanitizer configuration |
+| Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70; automatic reclamation of heap values |
+| Testing | 215 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 82 runtime file tests, 15 runtime memory tests, memory-limit measurement, sanitizer configuration |
 
 ## Known bugs and rough edges
 
-* **No memory reclamation.** Strings built at run time and file contents are never
-  freed. A long-running program that concatenates strings grows without bound.
-  This is the largest known consequence of the v0.2 design (ADR 0017).
+* **Conservative reclamation overshoots.** Peak memory is the live set plus
+  pointer-shaped leftovers on the stack, so a program can use somewhat more than
+  it strictly needs. It is never less than the live set (specification §12.3).
+* **Building a string in a loop copies it every time.** Memory is reclaimed, but
+  `text = text + piece` is still *O(n²)* in copying because `str` is immutable.
+  A string builder and growable containers are next (roadmap, milestone 7).
 * **No dynamic arrays or maps.** Every array has a compile-time length. A program
   that needs an unbounded sequence has to read its input whole, as `tools/notes`
   does with the notes file, or keep a fixed-size buffer.
@@ -58,8 +61,8 @@ please report it.
 * Constants, compile-time evaluation, macros, attributes.
 * Pattern matching, exceptions, `defer`/`finally`.
 * Modules with visibility, package management, separate compilation.
-* Any concurrency, async, or memory-management model beyond stack values and
-  never-freed allocations.
+* Concurrency and async: a second thread would need a stack the collector can
+  see, so it cannot be added before the runtime supports it.
 * A standard library beyond the built-ins in the specification.
 * User-defined printing (no `print` of a struct or array).
 

@@ -13,6 +13,10 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 out=${1:-"$root/build/manual"}
 shift || true
+# Recorded paths are compiled into the binary, so they must not depend on the
+# directory the compiler is later run from.
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
 
 mode=debug
 sanitize=
@@ -54,19 +58,36 @@ mkdir -p "$out"
 echo "== runtime"
 runtime_flags=(-std=c17 -O2 -Wall -Wextra -Wpedantic -I"$root/runtime/include")
 test_flags=(-std=c17 -O1 -Wall -Wextra -Wpedantic -I"$root/runtime/include")
+sanitizer_flags=()
 if [[ -n $sanitize ]]; then
-  # The runtime is linked into every generated program, so a sanitizer build of
-  # the compiler is only meaningful when the runtime is instrumented too.
-  runtime_flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
-  test_flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+  # The runtime library that generated programs link must stay plain: the
+  # programs are compiled by the C compiler without sanitizer flags, so pulling
+  # in an instrumented library would fail to link. A second, instrumented copy
+  # is used by the runtime's own tests, which is where the collector's memory
+  # handling needs the checks.
+  sanitizer_flags=(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+  test_flags+=("${sanitizer_flags[@]}")
 fi
 runtime_objects=()
+instrumented_objects=()
 for source in "$root"/runtime/src/*.c; do
   object="$out/runtime-$(basename "${source%.c}").o"
   "$cc" "${runtime_flags[@]}" -c "$source" -o "$object"
   runtime_objects+=("$object")
+  if [[ -n $sanitize ]]; then
+    instrumented="$out/runtime-instrumented-$(basename "${source%.c}").o"
+    "$cc" "${runtime_flags[@]}" "${sanitizer_flags[@]}" -c "$source" -o "$instrumented"
+    instrumented_objects+=("$instrumented")
+  fi
 done
 ar rcs "$out/libgable_rt.a" "${runtime_objects[@]}"
+if [[ -n $sanitize ]]; then
+  ar rcs "$out/libgable_rt_instrumented.a" "${instrumented_objects[@]}"
+fi
+runtime_test_library="$out/libgable_rt.a"
+if [[ -n $sanitize ]]; then
+  runtime_test_library="$out/libgable_rt_instrumented.a"
+fi
 
 echo "== compiler"
 objects=()
@@ -92,7 +113,10 @@ echo "== tests"
   "$root/tools/notes/tests/notes_tool_tests.cpp" "${objects[@]}" \
   -o "$out/notes_tool_tests"
 "$cc" "${test_flags[@]}" \
-  "$root/runtime/tests/fs_tests.c" "$out/libgable_rt.a" \
+  "$root/runtime/tests/fs_tests.c" "$runtime_test_library" \
   -o "$out/fs_tests"
+"$cc" "${test_flags[@]}" -I"$root/runtime/src" \
+  "$root/runtime/tests/gc_tests.c" "$runtime_test_library" \
+  -o "$out/gc_tests"
 
 echo "== done: $out"

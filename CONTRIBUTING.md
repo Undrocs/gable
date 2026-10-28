@@ -37,6 +37,13 @@ ctest --test-dir build/asan --output-on-failure
 The integration suite invokes a real C compiler, so a working `cc` is required for
 any change that touches code generation or the driver.
 
+Changes to the runtime are checked two ways beyond the unit and integration
+suites: `gc_tests` asserts that reachable values survive a collection and that
+unreachable ones are reclaimed, and `tools/check-memory.sh` builds a real program
+that allocates 1.6 GiB in short-lived strings and requires its peak resident memory
+to stay under 16 MiB. On a host without CMake, `tools/build-without-cmake.sh`
+builds the same targets, including `gc_tests`.
+
 ## What a change is expected to include
 
 * **Tests.** Every implemented behaviour needs a test. Compiler bugs need a

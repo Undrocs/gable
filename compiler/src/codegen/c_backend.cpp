@@ -833,6 +833,9 @@ class CEmitter {
     line(" * its i32 result becomes the process exit status. */");
     line("int main(int argc, char** argv) {");
     indent();
+    // The runtime records where this thread's stack begins before any Gable
+    // value exists, so the collector can find the values that are still in use.
+    line("gable_rt_init();");
     line("gable_rt_set_args(argc, argv);");
     line("return (int)gable_fn_" + sanitize(entry->name) + "();");
     dedent();

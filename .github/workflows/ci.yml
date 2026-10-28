@@ -93,6 +93,13 @@ jobs:
           ./build/gable check examples/tasks.gable
           ./build/gable run examples/tasks.gable | head -5
           ./build/gable build examples/primes.gable -o /tmp/primes
+
+      # A program that allocates 1.6 GiB of short-lived strings must stay inside a
+      # small fixed peak. This is the only check of the reclamation claim on a
+      # real compiled program, and it needs fork/wait, so it runs on Linux only.
+      - name: Check memory reclamation
+        if: matrix.compiler == 'gcc' && matrix.build_type == 'Debug'
+        run: ./tools/check-memory.sh ./build/gable
           /tmp/primes | head -5
           ./build/gable run examples/args.gable -- Ada Grace | head -3
           ./build/gable run tools/notes/notes.gable -- --file /tmp/notes.txt add "smoke test"

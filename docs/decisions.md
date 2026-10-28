@@ -389,3 +389,67 @@ other Windows toolchain is advertised.
 **Alternatives rejected.** (a) MinGW-only support: it is not the default toolchain
 users have. (b) Documenting WSL as the Windows story: it is not a native
 implementation and leaves the compiler untested on the platform it claims.
+
+---
+
+## 0021 — Memory is reclaimed by a conservative mark-and-sweep collector
+
+**Decision.** The runtime owns a heap for `str` values and for the buffers that
+`fs_read_text` returns. A mark-and-sweep collector traces from the machine stack
+and the callee-saved registers: a word is treated as a pointer when it falls
+inside a block the runtime allocated. Blocks that are not reached are freed.
+Collection runs during allocation, once the bytes allocated since the last cycle
+exceed a threshold of `max(1 MiB, 2 × live bytes)`. The generated entry point calls
+`gable_rt_init()` before anything else, which records where the thread's stack
+begins and arranges for the heap to be released at exit.
+
+**Why.** Programs needed to be able to run for longer than a handful of seconds
+without growing without bound, and doing so must not cost the language its
+simplicity: the memory model is what makes Gable teachable. A conservative
+collector keeps every guarantee the language already made — value semantics,
+immutability of `str`, no annotations — and adds reclamation underneath. The
+alternatives all change what the programmer has to know:
+
+* *Never reclaim* (the previous behaviour): correct, but memory grows with every
+  concatenation, which rules out the command-line tools the language targets.
+* *Reference counting*: needs a heap-allocated representation for every value that
+  can alias, adds an ownership question at every copy, cannot collect cycles, and
+  makes the cost of assignment visible in a language whose whole point is that
+  assignment is cheap and predictable.
+* *Ownership and borrowing*: a real answer, but it makes the first program a
+  beginner writes require a lifetime discussion, and it is a much larger change
+  than reclamation alone.
+* *Precise tracing with per-type maps*: exact rather than conservative, and it
+  would need type information for every stack slot, which the C backend cannot
+  express without changing how the whole backend passes values.
+
+Mark-and-sweep is also the only option here that keeps the existing C backend: the
+generated code stores values in ordinary C variables and struct fields, and the
+collector finds them by looking, so no generated code changed beyond one call.
+
+**Consequences.** Peak memory is the live set plus pointer-shaped leftovers on the
+stack, never less than the live set. A collection pauses the program while it
+scans the live heap, the stack, and the block table; the table is kept sorted so
+the scan is a binary search per word. The runtime must be single-threaded, which
+the language already is; concurrency will require per-thread stacks and a
+safepoint before it can be added. Heap memory is never freed by hand: the runtime
+and its tests allocate through `gable_rt_allocate` and drop references. On a host
+that cannot report the thread's stack bounds the collector stays off and memory is
+not reclaimed, which is safe and documented (specification §12.3).
+
+**Verification.** `runtime/tests/gc_tests.c` (15 checks) covers values surviving a
+collection, unreachable blocks being reclaimed, automatic collection under
+allocation pressure, interior pointers keeping their block alive, chains reachable
+only through the heap, and 200 000 short-lived allocations. `tools/check-memory.sh`
+runs a real compiled program that allocates 1.6 GiB and requires a peak under
+16 MiB. Both were checked against deliberately broken runtimes: skipping the root
+scan frees live values (the test crashes), and skipping collection grows the peak
+to 3.2 GiB (the script fails).
+
+**Rejected detail: deriving the stack top from a local variable.** The first
+implementation had the generated `main` pass the address of one of its own locals.
+That is not sound: the compiler may place locals above that address, and
+AddressSanitizer does, which made a live array of pointers invisible to the
+collector and a live block get freed. Each host is now asked for the thread's
+stack bounds (`pthread_getattr_np` on Linux, `pthread_get_stackaddr_np` on macOS,
+`GetCurrentThreadStackLimits` on Windows).

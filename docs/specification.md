@@ -228,8 +228,9 @@ NUL-terminated, may contain any byte except NUL, and may be arbitrarily long.
 * Literals are valid UTF-8. Operations such as slicing work on bytes and may
   split a multi-byte character; that is documented behaviour, not corruption.
 * `==` and `!=` compare contents, not identity.
-* `+` concatenates and allocates a new string. The result is valid until the
-  process exits: Gable 0.2 has no memory reclamation (§12).
+* `+` concatenates and allocates a new string. The result stays valid for as long
+  as the program can reach it; strings that are no longer reachable are reclaimed
+  automatically (§12).
 * Strings cannot be indexed. Use `str_slice`, `str_find`, and `str_trim` (§9).
 * Other operators on strings are compile-time errors.
 
@@ -546,11 +547,61 @@ lost.
 
 ## 12. Memory
 
-Gable 0.2 has no memory reclamation: strings produced by concatenation,
-conversion, slicing, and trimming are never freed, and `fs_read_text` buffers are
-kept for the life of the process. This is intentional for this version and is the
-main reason the language is not ready for long-running programs. Values of
-fixed-size types live on the stack.
+### 12.1 What a program says about memory
+
+Nothing. Gable has no ownership annotations, no `free`, and no lifetime syntax.
+Values of the fixed-size types live on the stack. Strings, and the buffers behind
+`fs_read_text`, live on a heap that the runtime manages:
+
+* A value is reclaimed once the program can no longer reach it. Reaching means
+  holding it in a variable, a field, an array element, a function argument, or a
+  string that itself is reachable — the usual meaning of "in use".
+* A value that is still reachable is never reclaimed, so a program that has been
+  corrected for a use-after-free cannot appear to work and then fail later.
+* Reclamation is automatic and driven by allocation: a program that allocates
+  continuously is collected continuously, and a program that allocates nothing
+  performs no collection work at all. There is no background thread and no timer.
+* The cost is proportional to the memory that is still in use plus the memory
+  that was allocated, not to the size of the program's history.
+
+### 12.2 What this means for a program
+
+```gable
+fn main() -> i32 {
+  var total: i64 = 0;
+  for i in 0..1000000 {
+    let piece = str_of_i64(i as i64) + ",";  // a new string every iteration
+    total = total + piece.len;               // ...used once, then dropped
+  }
+  print(total);
+  return 0;
+}
+```
+
+The loop allocates a million strings. Peak memory does not grow with the number
+of iterations: each iteration's string stops being reachable when the next one is
+assigned, and is reclaimed. `tools/check-memory.sh` measures this: the workload
+in `tools/bench/temporaries.gable` allocates 1.6 GiB in total and peaks at about
+2.6 MiB.
+
+### 12.3 Limits a program can rely on
+
+* Reclamation is conservative: an integer that happens to equal the address of a
+  heap block keeps that block alive until the value is gone. Peak memory is
+  therefore the live set plus a bounded amount of pointer-shaped leftovers, not an
+  exact figure. It never goes the other way: a reachable value is never reclaimed.
+* Programs are single-threaded. Starting a thread would introduce a second stack
+  that the collector does not scan, so the language has no way to start one, and
+  adding concurrency requires extending the collector first (§15).
+* On a host that cannot report where the running thread's stack begins, the
+  runtime does not collect at all. The program behaves exactly as specified but
+  uses memory in proportion to what it allocated. Every host that CI builds on
+  collects.
+* Copying a value does not copy its memory: strings are a pointer and a length.
+  `+` allocates and copies both operands into a new block, so building a string of
+  length *n* one piece at a time costs *O(n²)* copying even though memory use
+  stays bounded. Growable containers and a string builder are the next step in
+  `docs/roadmap.md`.
 
 ## 13. Compiler diagnostics
 
