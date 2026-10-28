@@ -141,17 +141,21 @@ std::string defaultCCompiler() { return "cl"; }
 
 std::string executableSuffix() { return ".exe"; }
 
-bool createDirectoryExclusive(const std::string& path, std::string& error) {
+CreateDirectoryResult createDirectoryExclusive(const std::string& path, std::string& error) {
   const std::wstring widePath = widen(path);
   if (widePath.empty()) {
     error = "cannot convert the directory name to UTF-16";
-    return false;
+    return CreateDirectoryResult::Failed;
   }
   if (::CreateDirectoryW(widePath.c_str(), nullptr) != 0) {
-    return true;
+    return CreateDirectoryResult::Created;
   }
-  error = lastErrorMessage(::GetLastError());
-  return false;
+  const DWORD code = ::GetLastError();
+  error = lastErrorMessage(code);
+  if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) {
+    return CreateDirectoryResult::AlreadyExists;
+  }
+  return CreateDirectoryResult::Failed;
 }
 
 bool writeNewFile(const std::string& path, const std::string& contents, std::string& error) {
@@ -198,13 +202,31 @@ bool replaceFile(const std::string& source, const std::string& destination, std:
     error = "cannot convert the file name to UTF-16";
     return false;
   }
-  // MOVEFILE_REPLACE_EXISTING makes the replacement atomic from the point of
-  // view of other processes reading the destination.
-  if (::MoveFileExW(wideSource.c_str(), wideDestination.c_str(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) {
-    return true;
+  // Windows refuses to replace a file that another process has open without
+  // FILE_SHARE_DELETE, and reports it as `ERROR_ACCESS_DENIED` or
+  // `ERROR_SHARING_VIOLATION`. The window is short, and for this compiler the
+  // other holder is usually another writer committing to the same output, so a
+  // failed attempt is retried before it is reported: without this, two
+  // concurrent builds writing one output path fail instead of producing whichever
+  // one finishes last. A permanent condition (a read-only destination, or one
+  // held open for the whole second) still fails, with the system message.
+  constexpr int kAttempts = 100;
+  constexpr DWORD kRetryDelayMilliseconds = 10;
+  DWORD lastError = ERROR_SUCCESS;
+  for (int attempt = 0; attempt < kAttempts; ++attempt) {
+    // MOVEFILE_REPLACE_EXISTING makes the replacement atomic from the point of
+    // view of other processes reading the destination.
+    if (::MoveFileExW(wideSource.c_str(), wideDestination.c_str(),
+                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0) {
+      return true;
+    }
+    lastError = ::GetLastError();
+    if (lastError != ERROR_ACCESS_DENIED && lastError != ERROR_SHARING_VIOLATION) {
+      break;
+    }
+    ::Sleep(kRetryDelayMilliseconds);
   }
-  error = lastErrorMessage(::GetLastError());
+  error = lastErrorMessage(lastError);
   return false;
 }
 

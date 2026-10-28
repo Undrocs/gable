@@ -112,11 +112,16 @@ std::optional<AtomicOutputFile> AtomicOutputFile::create(const std::string& targ
   std::string stagingError;
   for (int attempt = 0; attempt < 64; ++attempt) {
     const fs::path candidate = directory / (".gable-out-" + uniqueToken());
-    if (platform::createDirectoryExclusive(candidate.string(), stagingError)) {
+    const platform::CreateDirectoryResult created =
+        platform::createDirectoryExclusive(candidate.string(), stagingError);
+    if (created == platform::CreateDirectoryResult::Created) {
       stagingPath = candidate.string();
       break;
     }
-    if (stagingError.find("exists") == std::string::npos) {
+    // A collision with a name another process created is worth another token;
+    // any other failure would repeat. The result is compared by value because
+    // the message is localised.
+    if (created != platform::CreateDirectoryResult::AlreadyExists) {
       break;
     }
   }

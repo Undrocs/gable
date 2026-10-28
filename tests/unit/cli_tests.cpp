@@ -656,3 +656,29 @@ GABLE_TEST(cli_does_not_forward_c_compiler_stdout_on_success) {
   GABLE_CHECK(verbose.err.find("chatty compiler banner") != std::string::npos);
 }
 #endif
+
+// A name collision has to be distinguishable from any other failure without
+// reading the message: the message comes from the operating system and is
+// localised, and the staging-directory retry must not depend on its wording.
+GABLE_TEST(output_reports_a_directory_collision_by_value) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string path = directory.file("staging");
+  std::string error;
+
+  GABLE_CHECK(gable::platform::createDirectoryExclusive(path, error) ==
+              gable::platform::CreateDirectoryResult::Created);
+  GABLE_CHECK(error.empty());
+
+  error.clear();
+  GABLE_CHECK(gable::platform::createDirectoryExclusive(path, error) ==
+              gable::platform::CreateDirectoryResult::AlreadyExists);
+  GABLE_CHECK(!error.empty());
+
+  // A path whose parent does not exist cannot be created, and that is not a
+  // collision, so the caller must stop retrying instead of spinning.
+  error.clear();
+  const std::string missingParent = directory.file("no-such-directory/staging");
+  GABLE_CHECK(gable::platform::createDirectoryExclusive(missingParent, error) ==
+              gable::platform::CreateDirectoryResult::Failed);
+  GABLE_CHECK(!error.empty());
+}

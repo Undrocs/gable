@@ -41,7 +41,7 @@ ctest --test-dir build/debug --output-on-failure
 
 Four CTest entries exist:
 
-* `unit` — 214 fast unit tests (lexer, parser, semantics including multi-file
+* `unit` — 215 fast unit tests (lexer, parser, semantics including multi-file
   programs, code generation, CLI, robustness).
 * `notes_tool` — builds `tools/notes` and drives it through its command line; this
   is the end-to-end test for a real multi-file program.

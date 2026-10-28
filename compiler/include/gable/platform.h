@@ -38,15 +38,26 @@ std::string defaultCCompiler();
 std::string executableSuffix();
 
 /// Moves `source` to `destination`, replacing an existing file there in one
-/// step. On success `source` no longer exists.
+/// step. On success `source` no longer exists. A destination that another
+/// process has open is retried for about a second on Windows, where the system
+/// refuses to replace such a file.
 bool replaceFile(const std::string& source, const std::string& destination, std::string& error);
 
-/// Creates `path` as a new directory. Fails, rather than reusing it, when
+/// Outcome of createDirectoryExclusive. A collision is reported as its own
+/// value rather than as a message: the message is localised, and a caller that
+/// retries with a fresh name must not depend on its wording.
+enum class CreateDirectoryResult {
+  Created,
+  AlreadyExists,
+  Failed,
+};
+
+/// Creates `path` as a new directory, failing rather than reusing it when
 /// anything already exists at that path. On POSIX the directory is created with
 /// owner-only permissions (0700), so nothing else can add entries to it; on
 /// Windows it inherits the access control list of its parent, which is the
 /// user's own directory in every case where the compiler is used.
-bool createDirectoryExclusive(const std::string& path, std::string& error);
+CreateDirectoryResult createDirectoryExclusive(const std::string& path, std::string& error);
 
 /// Creates `path` and writes `contents` to it, failing when anything already
 /// exists there, including a symbolic link (exclusive creation: O_EXCL on POSIX,

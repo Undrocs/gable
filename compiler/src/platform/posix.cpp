@@ -81,14 +81,18 @@ std::string defaultCCompiler() { return "cc"; }
 
 std::string executableSuffix() { return {}; }
 
-bool createDirectoryExclusive(const std::string& path, std::string& error) {
+CreateDirectoryResult createDirectoryExclusive(const std::string& path, std::string& error) {
   // 0700: only this user can create entries in the directory, so nothing else
   // can race the compiler by planting a file or a symbolic link inside it.
   if (::mkdir(path.c_str(), S_IRWXU) == 0) {
-    return true;
+    return CreateDirectoryResult::Created;
   }
-  error = std::strerror(errno);
-  return false;
+  const int errorNumber = errno;
+  error = std::strerror(errorNumber);
+  if (errorNumber == EEXIST) {
+    return CreateDirectoryResult::AlreadyExists;
+  }
+  return CreateDirectoryResult::Failed;
 }
 
 bool writeNewFile(const std::string& path, const std::string& contents, std::string& error) {
