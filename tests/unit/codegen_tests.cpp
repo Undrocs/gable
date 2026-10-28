@@ -385,3 +385,56 @@ GABLE_TEST(codegen_uses_prelude_field_names_as_declared) {
   const std::string c = emitCFor(gabletest::kSimpleProgram());
   GABLE_CHECK(contains(c, ".gable_f_") == false);
 }
+
+// --------------------------------------------------------------------------
+// v0.3: growable lists
+// --------------------------------------------------------------------------
+
+GABLE_TEST(codegen_creates_and_appends_to_lists) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  var values: [i32] = [];\n"
+      "  list_push(values, 7);\n"
+      "  print(values.len);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_list_new((int64_t)sizeof(int32_t))"));
+  GABLE_CHECK(contains(c, "gable_rt_list_push("));
+  GABLE_CHECK(contains(c, "gable_rt_list_len("));
+}
+
+GABLE_TEST(codegen_reads_list_elements_through_the_runtime) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let values: [i32] = [1, 2];\n"
+      "  print(values[1]);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_list_at("));
+  GABLE_CHECK(contains(c, "memcpy(&"));
+}
+
+// A list element is not a C lvalue. Assigning to a field of one used to write to
+// the copy that reading produced, which silently lost the write.
+GABLE_TEST(codegen_writes_through_a_field_of_a_list_element) {
+  const std::string c = emitCFor(
+      "struct Item { count: i64 }\n"
+      "fn main() -> i32 {\n"
+      "  var items: [Item] = [];\n"
+      "  items[0].count = 3;\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_list_at("));
+  GABLE_CHECK(contains(c, "memcpy(&"));
+}
+
+GABLE_TEST(codegen_iterates_lists_with_a_snapshot_length) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  var values: [i32] = [1, 2];\n"
+      "  for value in values { print(value); }\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "gable_rt_list_len("));
+  GABLE_CHECK(contains(c, "for (int64_t"));
+}

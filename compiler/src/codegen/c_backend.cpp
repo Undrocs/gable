@@ -167,6 +167,7 @@ class CEmitter {
         return structCName(module_.structs[type.index()]->name,
                            module_.structs[type.index()]->fromPrelude);
       case ir::TypeKind::Array: return "gable_arr_" + std::to_string(type.index());
+      case ir::TypeKind::List: return "gable_list";
     }
     return "void";
   }
@@ -327,6 +328,21 @@ class CEmitter {
         return value("(" + cType(expr.type) + ")(" + operand.code + ")", operand.pure);
       }
       case ir::Expr::Kind::ArrayLiteral: {
+        if (expr.type.kind() == ir::TypeKind::List) {
+          // A list literal creates a fresh list and appends the elements in
+          // source order.
+          const std::string elementType = cType(module_.types.listElement(expr.type));
+          const std::string handleName = newTemp();
+          pre.push_back("gable_list " + handleName + " = gable_rt_list_new((int64_t)sizeof(" +
+                        elementType + "));");
+          for (const auto& element : expr.arguments) {
+            const CValue emitted = emitExpr(*element, pre);
+            const std::string valueName = newTemp();
+            pre.push_back(elementType + " " + valueName + " = " + emitted.code + ";");
+            pre.push_back("gable_rt_list_push(" + handleName + ", &" + valueName + ");");
+          }
+          return sequence(value(handleName, false), expr.type, pre);
+        }
         std::string code = "(" + cType(expr.type) + "){{";
         for (std::size_t i = 0; i < expr.arguments.size(); ++i) {
           if (i != 0) {
@@ -341,6 +357,9 @@ class CEmitter {
         const CValue base = emitExpr(*expr.lhs, pre);
         if (expr.lhs->type.kind() == ir::TypeKind::Str) {
           return value("(int64_t)(" + base.code + ").len", base.pure);
+        }
+        if (expr.lhs->type.kind() == ir::TypeKind::List) {
+          return sequence(value("gable_rt_list_len(" + base.code + ")", false), expr.type, pre);
         }
         return value(std::to_string(module_.types.length(expr.lhs->type)));
       }
@@ -504,6 +523,20 @@ class CEmitter {
   CValue emitIndex(const ir::Expr& expr, std::vector<std::string>& pre) {
     const CValue base = emitExpr(*expr.lhs, pre);
     const CValue index = emitExpr(*expr.rhs, pre);
+    if (expr.lhs->type.kind() == ir::TypeKind::List) {
+      // The handle and the index are evaluated once, in that order, and the
+      // bounds check happens inside gable_rt_list_at.
+      const std::string handleName = newTemp();
+      const std::string indexName = newTemp();
+      const std::string resultName = newTemp();
+      const std::string elementType = cType(expr.type);
+      pre.push_back("gable_list " + handleName + " = " + base.code + ";");
+      pre.push_back("int64_t " + indexName + " = (int64_t)(" + index.code + ");");
+      pre.push_back(elementType + " " + resultName + ";");
+      pre.push_back("memcpy(&" + resultName + ", gable_rt_list_at(" + handleName + ", " +
+                    indexName + "), sizeof " + resultName + ");");
+      return value(resultName, false);
+    }
     const std::uint64_t length = module_.types.length(expr.lhs->type);
     const std::string lengthText = std::to_string(length);
 
@@ -603,6 +636,19 @@ class CEmitter {
         return sequence(value("gable_rt_str_slice(" + joined() + ")", false), expr.type, pre);
       case ir::Builtin::Trim:
         return sequence(value("gable_rt_str_trim(" + joined() + ")", false), expr.type, pre);
+      case ir::Builtin::ListPush: {
+        // `arguments` holds a materialized value for each argument, so the list
+        // handle is copied once and the appended element is a temporary that the
+        // runtime copies from.
+        const ir::Type listType = expr.arguments[0]->type;
+        const std::string elementType = cType(module_.types.listElement(listType));
+        const std::string handleName = newTemp();
+        const std::string valueName = newTemp();
+        pre.push_back("gable_list " + handleName + " = " + arguments[0] + ";");
+        pre.push_back(elementType + " " + valueName + " = " + arguments[1] + ";");
+        pre.push_back("gable_rt_list_push(" + handleName + ", &" + valueName + ");");
+        return value("", true);
+      }
       case ir::Builtin::None:
         break;
     }
@@ -617,6 +663,62 @@ class CEmitter {
   }
 
   /// Emits an assignment target without materializing it.
+  /// Whether assigning to `expr` has to go through a list element.
+  ///
+  /// A list element lives in storage the runtime owns, and reading it produces a
+  /// copy, so `items[0].count = 1` cannot be written as an assignment to the
+  /// copy. Those targets are written through an address instead.
+  static bool rootedInListIndex(const ir::Expr& expr) {
+    switch (expr.kind) {
+      case ir::Expr::Kind::FieldAccess:
+        return rootedInListIndex(*expr.lhs);
+      case ir::Expr::Kind::Index:
+        return expr.lhs->type.kind() == ir::TypeKind::List || rootedInListIndex(*expr.lhs);
+      default:
+        return false;
+    }
+  }
+
+  /// C expression giving the address of the storage `expr` names. Only used for
+  /// targets that are rooted in a list element; everything else keeps the plain
+  /// assignment path, so the generated code stays readable.
+  std::string emitAddressOf(const ir::Expr& expr, std::vector<std::string>& pre) {
+    if (expr.kind == ir::Expr::Kind::FieldAccess) {
+      // The base address may come from the runtime as `void *`, so it is cast to
+      // the struct it points to before the field is named.
+      const std::string base = emitAddressOf(*expr.lhs, pre);
+      return "&(((" + cType(expr.lhs->type) + "*)(" + base + "))->" +
+             fieldCName(expr.lhs->type, expr.name) + ")";
+    }
+    if (expr.kind != ir::Expr::Kind::Index) {
+      return "&(" + emitLvalue(expr, pre) + ")";
+    }
+    const CValue base = emitExpr(*expr.lhs, pre);
+    const CValue index = emitExpr(*expr.rhs, pre);
+    if (expr.lhs->type.kind() == ir::TypeKind::List) {
+      const std::string handleName = newTemp();
+      const std::string indexName = newTemp();
+      pre.push_back("gable_list " + handleName + " = " + base.code + ";");
+      pre.push_back("int64_t " + indexName + " = (int64_t)(" + index.code + ");");
+      return "gable_rt_list_at(" + handleName + ", " + indexName + ")";
+    }
+    const std::uint64_t length = module_.types.length(expr.lhs->type);
+    const std::string lengthText = std::to_string(length);
+    const std::string indexName = newTemp();
+    if (expr.rhs->type.isSigned()) {
+      pre.push_back("int64_t " + indexName + " = (int64_t)(" + index.code + ");");
+      pre.push_back("if (" + indexName + " < 0 || " + indexName + " >= " + lengthText +
+                    ") gable_rt_index_error(" + indexName + ", " + lengthText + ");");
+    } else {
+      pre.push_back("uint64_t " + indexName + " = (uint64_t)(" + index.code + ");");
+      pre.push_back("if (" + indexName + " >= " + lengthText + ") gable_rt_index_error((int64_t)" +
+                    indexName + ", " + lengthText + ");");
+    }
+    const std::string baseName = newTemp();
+    pre.push_back(cType(expr.lhs->type) + " " + baseName + " = " + base.code + ";");
+    return "&(" + baseName + ".data[" + indexName + "])";
+  }
+
   std::string emitLvalue(const ir::Expr& expr, std::vector<std::string>& pre) {
     switch (expr.kind) {
       case ir::Expr::Kind::Local:
@@ -646,7 +748,13 @@ class CEmitter {
     std::vector<std::string> pre;
     switch (statement.kind) {
       case ir::Stmt::Kind::Let: {
-        std::string initializer = "{0}";
+        // A list is a handle, so its zero value has to be a real empty list
+        // rather than a null pointer.
+        std::string initializer =
+            statement.type.kind() == ir::TypeKind::List
+                ? "gable_rt_list_new((int64_t)sizeof(" +
+                      cType(module_.types.listElement(statement.type)) + "))"
+                : "{0}";
         if (statement.value) {
           initializer = emitExpr(*statement.value, pre).code;
         }
@@ -655,6 +763,18 @@ class CEmitter {
         return;
       }
       case ir::Stmt::Kind::Assign: {
+        if (rootedInListIndex(*statement.target)) {
+          // The target lives in storage the runtime owns, so the assignment
+          // copies the value into it rather than assigning to a C lvalue.
+          const std::string address = emitAddressOf(*statement.target, pre);
+          const CValue assigned = emitExpr(*statement.value, pre);
+          const std::string valueName = newTemp();
+          pre.push_back(cType(statement.target->type) + " " + valueName + " = " + assigned.code +
+                        ";");
+          flush(pre);
+          line("memcpy(" + address + ", &" + valueName + ", sizeof " + valueName + ");");
+          return;
+        }
         const std::string target = emitLvalue(*statement.target, pre);
         const CValue assigned = emitExpr(*statement.value, pre);
         flush(pre);
@@ -739,6 +859,30 @@ class CEmitter {
         return;
       }
       case ir::Stmt::Kind::ForEach: {
+        if (statement.value->type.kind() == ir::TypeKind::List) {
+          // The number of iterations is decided when the loop starts; elements
+          // are read again for every iteration, so a body that appends does not
+          // lose or corrupt what is being iterated.
+          const CValue handle = emitExpr(*statement.value, pre);
+          const std::string handleName = newTemp();
+          const std::string limitName = newTemp();
+          const std::string indexName = newTemp();
+          const std::string elementType = cType(statement.type);
+          const std::string name = slotName(statement.slot);
+          pre.push_back("gable_list " + handleName + " = " + handle.code + ";");
+          pre.push_back("int64_t " + limitName + " = gable_rt_list_len(" + handleName + ");");
+          flush(pre);
+          line("for (int64_t " + indexName + " = 0; " + indexName + " < " + limitName + "; ++" +
+               indexName + ") {");
+          indent();
+          line(elementType + " " + name + ";");
+          line("memcpy(&" + name + ", gable_rt_list_at(" + handleName + ", " + indexName +
+               "), sizeof " + name + ");");
+          emitStatements(statement.body);
+          dedent();
+          line("}");
+          return;
+        }
         const CValue array = emitExpr(*statement.value, pre);
         const std::string arrayName = newTemp();
         pre.push_back(cType(statement.value->type) + " " + arrayName + " = " + array.code + ";");

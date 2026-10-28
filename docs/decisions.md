@@ -453,3 +453,55 @@ AddressSanitizer does, which made a live array of pointers invisible to the
 collector and a live block get freed. Each host is now asked for the thread's
 stack bounds (`pthread_getattr_np` on Linux, `pthread_get_stackaddr_np` on macOS,
 `GetCurrentThreadStackLimits` on Windows).
+
+---
+
+## 0022 — A list is a growable handle, not a value
+
+**Decision.** `[T]` is a growable list of `T`; `[T; N]` stays a fixed-length
+array. A list value is a handle to heap storage that holds the elements, their
+count, and their capacity. Copying a list copies the handle, so every copy sees
+the same elements, and `list_push(list, value)` is visible through every copy.
+Elements are bounds checked, `.len` is the count, and `for item in list` iterates.
+
+**Why.** Programs needed a collection that grows, and the task-list tool cannot be
+written honestly without one. The hard question is what happens when a list is
+assigned or passed. There were two coherent answers:
+
+* *A list is a value*: assignment copies the elements. Then `list_push(items, x)`
+  inside a function cannot be visible to the caller, which makes an append helper
+  impossible without returning a new list and reassigning it at every call site.
+  Copy-on-write would fix the visibility and make every call site pay a copy, and
+  the copy cost would be invisible in the source — the opposite of what this
+  language is for.
+* *A list is a handle*: appends are visible, passing a list is O(1), and the cost
+  of any line is visible where it is written.
+
+The second was chosen. It is the model a reader already knows from JavaScript
+arrays and Go slices, and it keeps Gable's rule that mutation appears in the
+source: elements change only where `list[i] = v` or `list_push` is written.
+
+**Consequences.** A `let` binding that holds a list does not freeze the elements;
+the specification says so in §6.1 and §6.6 instead of leaving it to be discovered.
+Two bindings can name the same list, so a function can change its caller's
+collection — deliberately, as with any in-place append. `.len` is read from the
+shared storage, so every handle agrees. A list that no handle names is reclaimed by
+the collector (ADR 0021), including its storage. Element types do not need
+generics: one implementation stores elements `stride` bytes apart and the compiler
+knows the element type, which is enough for `list_push`, indexing, and iteration.
+
+**Alternatives rejected.** (a) Value semantics with copy-on-write: invisible copies
+and a reference-count-like model without the benefits. (b) Requiring `var` for
+`list_push`: it would not actually prevent aliasing — a `[Task]` parameter can be
+appended to — so it would teach a rule that is not true. (c) Generics plus a single
+`List<T>`: the mechanism the directive defers until something needs it; a
+monomorphic `[T]` with a runtime element size is smaller and does the same work.
+(d) A separate `list_push` type per element type: more runtime surface for no
+benefit.
+
+**Verification.** `runtime/tests/list_tests.c` covers growth across doublings,
+shared handles, element stride, and reclamation. The integration cases `lists`,
+`list_bounds_trap`, and `error_list_element_type` run real programs, `examples/
+lists.gable` is executed by the suite, and the unit tests cover parsing `[T]`,
+element type checking, and the generated C for appends, indexing, assignment
+through a list element, and iteration.

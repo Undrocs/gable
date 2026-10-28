@@ -554,21 +554,23 @@ ir::ExprPtr SemanticAnalyzer::checkLvalue(const ast::Expr& expr) {
       if (!base) {
         return nullptr;
       }
-      if (base->type.kind() != ir::TypeKind::Array) {
+      if (!base->type.isIterable()) {
         diagnostics_.error(currentFile_, expr.span,
                            "cannot index a value of type '" +
                                ir::typeName(base->type, *module_) +
-                               "'; only arrays can be indexed");
+                               "'; only arrays and lists can be indexed");
         return base;
       }
       ir::ExprPtr index = checkExpr(*expr.rhs, std::nullopt);
       if (index->type.kind() != ir::TypeKind::Error && !index->type.isInteger()) {
         diagnostics_.error(currentFile_, expr.rhs->span,
-                           "array index must be an integer, found '" +
+                           "index must be an integer, found '" +
                                ir::typeName(index->type, *module_) + "'");
       }
-      auto access = std::make_unique<ir::Expr>(ir::Expr::Kind::Index,
-                                               module_->types.element(base->type), expr.span);
+      const ir::Type elementType = base->type.kind() == ir::TypeKind::List
+                                       ? module_->types.listElement(base->type)
+                                       : module_->types.element(base->type);
+      auto access = std::make_unique<ir::Expr>(ir::Expr::Kind::Index, elementType, expr.span);
       access->lhs = std::move(base);
       access->rhs = std::move(index);
       return access;
@@ -707,11 +709,14 @@ ir::StmtPtr SemanticAnalyzer::checkFor(const ast::Stmt& stmt) {
       popScope();
       return nullptr;
     }
-    if (iterable->type.kind() != ir::TypeKind::Array) {
+    if (!iterable->type.isIterable()) {
       diagnostics_.error(currentFile_, stmt.value->span,
-                         "a 'for' loop iterates over an array or a range such as 0..n, found '" +
+                         "a 'for' loop iterates over an array, a list, or a range such as 0..n, "
+                         "found '" +
                              ir::typeName(iterable->type, *module_) + "'");
       variableType = ir::Type::error();
+    } else if (iterable->type.kind() == ir::TypeKind::List) {
+      variableType = module_->types.listElement(iterable->type);
     } else {
       variableType = module_->types.element(iterable->type);
     }
@@ -1061,6 +1066,48 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
   return lowered;
 }
 
+ir::ExprPtr SemanticAnalyzer::checkListPush(const ast::Expr& expr) {
+  auto lowered =
+      std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::voidType(), expr.span);
+  lowered->builtin = ir::Builtin::ListPush;
+  lowered->name = "list_push";
+
+  if (expr.arguments.size() != 2) {
+    diagnostics_.error(currentFile_, expr.span,
+                       "list_push expects 2 arguments, the list and the value to add, found " +
+                           std::to_string(expr.arguments.size()));
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return lowered;
+  }
+
+  ir::ExprPtr list = checkExpr(*expr.arguments[0], std::nullopt);
+  if (list->type.kind() == ir::TypeKind::Error) {
+    lowered->arguments.push_back(std::move(list));
+    for (std::size_t i = 1; i < expr.arguments.size(); ++i) {
+      checkExpr(*expr.arguments[i], std::nullopt);
+    }
+    return lowered;
+  }
+  if (list->type.kind() != ir::TypeKind::List) {
+    diagnostics_.error(currentFile_, expr.arguments[0]->span,
+                       "list_push needs a list, found '" +
+                           ir::typeName(list->type, *module_) + "'");
+    diagnostics_.note(currentFile_, expr.arguments[0]->span,
+                      "a growable list is written with an element type and no length, "
+                      "for example 'let names: [str] = [];'");
+    lowered->arguments.push_back(std::move(list));
+    checkExpr(*expr.arguments[1], std::nullopt);
+    return lowered;
+  }
+
+  const ir::Type elementType = module_->types.listElement(list->type);
+  lowered->arguments.push_back(std::move(list));
+  lowered->arguments.push_back(conformTo(*expr.arguments[1], elementType, "list element"));
+  return lowered;
+}
+
 ir::ExprPtr SemanticAnalyzer::checkPrintCall(const ast::Expr& expr, ir::Builtin id) {
   const char* name = id == ir::Builtin::Print ? "print" : "eprint";
   auto lowered =
@@ -1084,8 +1131,14 @@ ir::ExprPtr SemanticAnalyzer::checkPrintCall(const ast::Expr& expr, ir::Builtin 
     diagnostics_.error(currentFile_, expr.arguments[0]->span,
                        std::string(name) + " cannot print a value of type '" +
                            ir::typeName(argumentType, *module_) + "'");
-    diagnostics_.note(currentFile_, expr.arguments[0]->span,
-                      "print the fields of a struct individually, for example 'point.x'");
+    if (argumentType.kind() == ir::TypeKind::List) {
+      diagnostics_.note(currentFile_, expr.arguments[0]->span,
+                        "print each element instead, for example with 'for item in values { "
+                        "print(item); }'");
+    } else {
+      diagnostics_.note(currentFile_, expr.arguments[0]->span,
+                        "print the fields of a struct individually, for example 'point.x'");
+    }
   }
   lowered->arguments.push_back(std::move(argument));
   return lowered;
@@ -1097,6 +1150,11 @@ ir::ExprPtr SemanticAnalyzer::checkCall(const ast::Expr& expr) {
   }
   if (expr.name == "eprint") {
     return checkPrintCall(expr, ir::Builtin::Eprint);
+  }
+  if (expr.name == "list_push") {
+    // The second argument's type depends on the first, so this builtin cannot be
+    // described by the fixed signature table.
+    return checkListPush(expr);
   }
   if (const BuiltinInfo* builtin = findBuiltin(expr.name)) {
     return checkBuiltinCall(expr, *builtin);
@@ -1231,11 +1289,11 @@ ir::ExprPtr SemanticAnalyzer::checkFieldAccess(const ast::Expr& expr) {
     return base;
   }
 
-  // `.len` is defined for strings (bytes) and arrays (element count).
+  // `.len` is defined for strings (bytes), arrays, and lists (element count).
   if (expr.fieldName == "len") {
-    if (base->type.kind() != ir::TypeKind::Str && base->type.kind() != ir::TypeKind::Array) {
+    if (base->type.kind() != ir::TypeKind::Str && !base->type.isIterable()) {
       diagnostics_.error(currentFile_, expr.fieldSpan,
-                         "'len' is only defined for strings and arrays, not for '" +
+                         "'len' is only defined for strings, arrays, and lists, not for '" +
                              ir::typeName(base->type, *module_) + "'");
       return base;
     }
@@ -1270,10 +1328,10 @@ ir::ExprPtr SemanticAnalyzer::checkIndex(const ast::Expr& expr) {
   if (base->type.kind() == ir::TypeKind::Error) {
     return base;
   }
-  if (base->type.kind() != ir::TypeKind::Array) {
+  if (!base->type.isIterable()) {
     diagnostics_.error(currentFile_, expr.span,
                        "cannot index a value of type '" + ir::typeName(base->type, *module_) +
-                           "'; only arrays can be indexed");
+                           "'; only arrays and lists can be indexed");
     if (base->type.kind() == ir::TypeKind::Str) {
       diagnostics_.note(currentFile_, expr.span,
                         "use str_slice(text, start, length) to take part of a string");
@@ -1283,11 +1341,13 @@ ir::ExprPtr SemanticAnalyzer::checkIndex(const ast::Expr& expr) {
   ir::ExprPtr index = checkExpr(*expr.rhs, std::nullopt);
   if (index->type.kind() != ir::TypeKind::Error && !index->type.isInteger()) {
     diagnostics_.error(currentFile_, expr.rhs->span,
-                       "array index must be an integer, found '" +
-                           ir::typeName(index->type, *module_) + "'");
+                       "index must be an integer, found '" + ir::typeName(index->type, *module_) +
+                           "'");
   }
-  auto lowered = std::make_unique<ir::Expr>(ir::Expr::Kind::Index,
-                                            module_->types.element(base->type), expr.span);
+  const ir::Type elementType = base->type.kind() == ir::TypeKind::List
+                                   ? module_->types.listElement(base->type)
+                                   : module_->types.element(base->type);
+  auto lowered = std::make_unique<ir::Expr>(ir::Expr::Kind::Index, elementType, expr.span);
   lowered->lhs = std::move(base);
   lowered->rhs = std::move(index);
   return lowered;
@@ -1317,11 +1377,22 @@ ir::ExprPtr SemanticAnalyzer::checkCast(const ast::Expr& expr) {
 
 ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
                                                std::optional<ir::Type> expected) {
+  if (expected && expected->kind() == ir::TypeKind::List) {
+    // `[1, 2, 3]` where a list is expected: the elements decide nothing about
+    // the type, so the surrounding context supplies it.
+    const ir::Type elementType = module_->types.listElement(*expected);
+    auto list = std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, *expected, expr.span);
+    for (const auto& element : expr.arguments) {
+      list->arguments.push_back(conformTo(*element, elementType, "list element"));
+    }
+    return list;
+  }
   if (!expected || expected->kind() != ir::TypeKind::Array) {
     diagnostics_.error(currentFile_, expr.span,
                        "cannot infer the type of an array literal from its elements");
     diagnostics_.note(currentFile_, expr.span,
-                      "annotate the binding, for example 'let values: [i32; 3] = [1, 2, 3];'");
+                      "annotate the binding, for example 'let values: [i32; 3] = [1, 2, 3];' "
+                      "for a fixed array, or 'let totals: [i32] = [0];' for a growable list");
     for (const auto& element : expr.arguments) {
       checkExpr(*element, std::nullopt);
     }
@@ -1365,6 +1436,21 @@ SemanticAnalyzer::Binding* SemanticAnalyzer::lookup(const std::string& name) {
 }
 
 ir::Type SemanticAnalyzer::resolveType(const ast::TypeSyntax& syntax) {
+  if (syntax.kind == ast::TypeSyntax::Kind::List) {
+    if (!syntax.element) {
+      return ir::Type::error();
+    }
+    const ir::Type element = resolveType(*syntax.element);
+    if (element.kind() == ir::TypeKind::Error) {
+      return ir::Type::error();
+    }
+    if (element.kind() == ir::TypeKind::Void) {
+      diagnostics_.error(currentFile_, syntax.span, "a list element cannot have type 'void'");
+      return ir::Type::error();
+    }
+    return module_->types.list(element);
+  }
+
   if (syntax.kind == ast::TypeSyntax::Kind::Array) {
     if (!syntax.element) {
       return ir::Type::error();

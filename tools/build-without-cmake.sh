@@ -118,5 +118,8 @@ echo "== tests"
 "$cc" "${test_flags[@]}" -I"$root/runtime/src" \
   "$root/runtime/tests/gc_tests.c" "$runtime_test_library" \
   -o "$out/gc_tests"
+"$cc" "${test_flags[@]}" -I"$root/runtime/src" \
+  "$root/runtime/tests/list_tests.c" "$runtime_test_library" \
+  -o "$out/list_tests"
 
 echo "== done: $out"

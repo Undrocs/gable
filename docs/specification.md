@@ -204,6 +204,13 @@ Every Gable value is copied when it is assigned, passed as an argument, returned
 or read out of an aggregate. There are no references and no aliasing, so a
 function cannot modify its caller's variables except by returning a new value.
 
+There is one deliberate exception, and it is about what a value *is* rather than
+how copying works: a list (§6.6) is a handle to shared storage. Copying the handle
+is still a copy of the value, and the variable it lives in is still independent —
+but both handles name the same elements, so appending through one is visible
+through the other. Strings and arrays are values all the way down and are copied
+in full.
+
 ### 6.2 Integers
 
 Integers are fixed-width. Arithmetic wraps modulo 2<sup>width</sup> and never
@@ -254,7 +261,65 @@ rejected at run time and unsigned indices are compared against the length.
 `values.len` is the element count and has type `i64`. Arrays are copied like any
 other value.
 
-### 6.6 Structs
+### 6.6 Lists
+
+An array has a fixed length, which is the wrong tool for data that grows. A list
+has no length in its type and can be appended to:
+
+```gable
+let names: [str] = [];          // an empty list of strings
+list_push(names, "ada");
+list_push(names, "grace");
+print(names.len);               // 2
+print(names[0]);                // ada
+names[1] = "hopper";            // replaces an element
+for name in names {
+  print(name);
+}
+```
+
+* `[T]` is a growable list of `T`; `[T; N]` is a fixed-length array. The two are
+  different types and do not convert into each other.
+* A list literal is valid where a list type is expected: `let counts: [i64] =
+  [1, 2];` starts a list with two elements, and `let empty: [i64] = [];` starts an
+  empty one. An empty literal with no expected type is a compile-time error,
+  because there is nothing to say what it would hold.
+* `list_push(list, value)` appends `value` and returns nothing. The value type
+  must be the element type of the list.
+* `list[i]` reads an element and `list[i] = value` replaces one. Both are bounds
+  checked, and an out-of-range index traps with exit status 70 (§11).
+* `list.len` is the element count and has type `i64`.
+* `for item in list { ... }` visits the elements, in order, that were in the list
+  when the loop started.
+* Elements may be any type that is not `void`: scalars, strings, structs, arrays,
+  and other lists (`[[i32]]`).
+
+A list value is a handle to shared storage, not the elements themselves. Copying a
+list, passing it to a function, or returning it copies the handle: every copy sees
+the same elements and the same length. This is what makes `list_push(items, x)`
+inside a function affect the caller's list, and it is the one place in Gable where
+a `let` binding does not freeze what it refers to:
+
+```gable
+fn add(values: [i32]) -> void {
+  list_push(values, 1);         // visible to the caller
+}
+
+fn main() -> i32 {
+  let numbers: [i32] = [];
+  add(numbers);
+  print(numbers.len);           // 1
+  return 0;
+}
+```
+
+Mutation is always visible in the source: an element is replaced by `list[i] = v`
+and a list grows only where `list_push` is written. Nothing is copied implicitly
+when a list is passed, so the cost of a call does not depend on the list's length.
+The memory behind a list is reclaimed like any other heap value when no list
+refers to it (§12).
+
+### 6.7 Structs
 
 ```gable
 let point: Point = Point(3, 4);
@@ -348,6 +413,11 @@ be modified.
 An array loop copies the array expression once and iterates over that copy, so
 modifying the original binding inside the body does not affect the iteration. The
 loop variable is a copy of the element.
+
+A list loop evaluates the list once and reads its length when the loop starts. It
+visits that many elements in order; elements are read one at a time, so a body
+that appends to the list does not disturb the iteration but also does not extend
+it. The loop variable is a copy of the element.
 
 ### 7.6 `break` and `continue`
 
@@ -458,6 +528,7 @@ reserved.
 | `str_find(haystack, needle)` | `str, str -> FindResult` | byte offset of the first occurrence |
 | `str_slice(text, start, length)` | `str, i32, i32 -> SliceResult` | copies a byte range |
 | `str_trim(text)` | `str -> str` | removes leading and trailing ASCII whitespace (space, tab, newline, carriage return, vertical tab, form feed; not other Unicode spaces) |
+| `list_push(list, value)` | `[T], T -> void` | appends `value` to `list` (§6.6) |
 
 The result types are ordinary structs declared by the prelude, so their fields
 are read like any other struct:

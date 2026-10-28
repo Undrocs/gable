@@ -529,14 +529,14 @@ GABLE_TEST(sema_rejects_array_literal_element_type) {
 GABLE_TEST(sema_rejects_indexing_a_non_array) {
   const auto analysis = analyze(inMain("  let text: str = \"abc\";\n  print(text[0]);\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(mentions(analysis, "only arrays can be indexed"));
+  GABLE_CHECK(mentions(analysis, "only arrays and lists can be indexed"));
   GABLE_CHECK(mentions(analysis, "str_slice"));
 }
 
 GABLE_TEST(sema_rejects_non_integer_index) {
   const auto analysis = analyze(inMain("  let values: [i32; 2] = [1, 2];\n  print(values[true]);\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(mentions(analysis, "array index must be an integer"));
+  GABLE_CHECK(mentions(analysis, "index must be an integer"));
 }
 
 GABLE_TEST(sema_accepts_nested_arrays_and_array_fields) {
@@ -582,7 +582,7 @@ GABLE_TEST(sema_rejects_string_arithmetic) {
 GABLE_TEST(sema_rejects_length_of_an_integer) {
   const auto analysis = analyze(inMain("  let a: i32 = 1;\n  print(a.len);\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(mentions(analysis, "'len' is only defined for strings and arrays"));
+  GABLE_CHECK(mentions(analysis, "'len' is only defined for strings, arrays, and lists"));
 }
 
 // --------------------------------------------------------------------------
@@ -648,7 +648,7 @@ GABLE_TEST(sema_rejects_break_and_continue_outside_loops) {
 GABLE_TEST(sema_rejects_for_over_a_non_array) {
   const auto analysis = analyze(inMain("  for c in \"abc\" { print(c); }\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
-  GABLE_CHECK(mentions(analysis, "iterates over an array or a range"));
+  GABLE_CHECK(mentions(analysis, "iterates over an array, a list, or a range"));
 }
 
 GABLE_TEST(sema_rejects_range_of_non_integers) {
@@ -789,4 +789,64 @@ GABLE_TEST(sema_diagnostics_name_the_offending_file) {
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(mentions(analysis, "unknown function 'missing'"));
   GABLE_CHECK(mentions(analysis, "main.gable:"));
+}
+
+// --------------------------------------------------------------------------
+// v0.3: growable lists
+// --------------------------------------------------------------------------
+
+GABLE_TEST(sema_accepts_a_list_type_and_list_push) {
+  const auto analysis = analyze(inMain(
+      "  var names: [str] = [];\n"
+      "  list_push(names, \"a\");\n"
+      "  print(names.len);\n"
+      "  print(names[0]);\n"
+      "  for name in names { print(name); }\n"
+      "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_checks_the_element_type_of_list_push) {
+  const auto analysis = analyze(inMain("  var counts: [i64] = [];\n  list_push(counts, \"many\");\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "type mismatch in list element"));
+  GABLE_CHECK(mentions(analysis, "expected 'i64', found 'str'"));
+}
+
+GABLE_TEST(sema_rejects_list_push_on_a_non_list) {
+  const auto analysis = analyze(inMain("  let count: i32 = 1;\n  list_push(count, 2);\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "list_push needs a list"));
+  GABLE_CHECK(mentions(analysis, "[str]"));
+}
+
+GABLE_TEST(sema_requires_an_expected_type_for_a_list_literal) {
+  const auto analysis = analyze(inMain("  let values = [];\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot infer the type of an array literal"));
+  GABLE_CHECK(mentions(analysis, "[i32]"));
+}
+
+GABLE_TEST(sema_rejects_wrong_element_in_a_list_literal) {
+  const auto analysis = analyze(inMain("  let values: [i32] = [1, \"two\"];\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "type mismatch in list element"));
+}
+
+GABLE_TEST(sema_iterates_a_list_with_its_element_type) {
+  const auto analysis = analyze(
+      "struct Item { name: str }\n"
+      "fn main() -> i32 {\n"
+      "  var items: [Item] = [];\n"
+      "  for item in items { print(item.name); }\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_reports_the_type_of_a_list_in_messages) {
+  const auto analysis = analyze(inMain("  var values: [str] = [];\n  print(values);\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "'[str]'"));
+  GABLE_CHECK(mentions(analysis, "for item in values"));
 }

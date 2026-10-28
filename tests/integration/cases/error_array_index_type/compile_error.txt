@@ -1,2 +1,2 @@
-array index must be an integer
+index must be an integer
 found 'str'

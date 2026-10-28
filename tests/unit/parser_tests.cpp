@@ -235,3 +235,23 @@ GABLE_TEST(parser_limits_nesting_depth) {
   GABLE_CHECK(!outcome.ok);
   GABLE_CHECK(outcome.diagnostics.find("nested") != std::string::npos);
 }
+
+GABLE_TEST(parser_reads_a_growable_list_type) {
+  const ParseOutcome outcome = parse(
+      "fn f(values: [i32]) -> [str] {\n"
+      "  return values;\n"
+      "}\n");
+  GABLE_CHECK(outcome.ok);
+  const gable::ast::FunctionDecl& function = *outcome.program.functions[0];
+  GABLE_CHECK(function.parameters[0].type.kind == TypeSyntax::Kind::List);
+  GABLE_CHECK(function.parameters[0].type.element != nullptr);
+  GABLE_CHECK_EQ(std::string("i32"), function.parameters[0].type.element->name);
+  GABLE_CHECK(function.returnType.kind == TypeSyntax::Kind::List);
+  GABLE_CHECK_EQ(std::string("str"), function.returnType.element->name);
+}
+
+GABLE_TEST(parser_explains_a_missing_length_or_bracket) {
+  const ParseOutcome outcome = parse("fn f(values: [i32 4]) -> i32 {\n  return 0;\n}\n");
+  GABLE_CHECK(!outcome.ok);
+  GABLE_CHECK(outcome.diagnostics.find("growable list type") != std::string::npos);
+}

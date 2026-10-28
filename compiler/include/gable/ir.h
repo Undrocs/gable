@@ -33,7 +33,8 @@ enum class TypeKind {
   U32,
   U64,
   Struct,
-  Array,
+  Array,  // fixed length, a value: copying copies the elements
+  List,   // growable, a handle: copying copies the reference to the elements
 };
 
 /// Builtin functions. They are part of the language surface and are lowered to
@@ -56,6 +57,7 @@ enum class Builtin {
   Find,
   Slice,
   Trim,
+  ListPush,
 };
 
 class Type {
@@ -84,15 +86,25 @@ class Type {
     type.index_ = index;
     return type;
   }
+  static constexpr Type listType(std::uint32_t index) {
+    Type type(TypeKind::List);
+    type.index_ = index;
+    return type;
+  }
 
   TypeKind kind() const { return kind_; }
-  /// Struct index for TypeKind::Struct, array index for TypeKind::Array.
+  /// Struct index for TypeKind::Struct, array or list index for TypeKind::Array
+  /// and TypeKind::List.
   std::uint32_t index() const { return index_; }
 
   bool isValid() const { return kind_ != TypeKind::Error; }
   bool isInteger() const;
   bool isSigned() const;
+  /// Types whose value is stored in place. A list is not one of them: copying a
+  /// list copies a handle to shared elements.
   bool isAggregate() const { return kind_ == TypeKind::Struct || kind_ == TypeKind::Array; }
+  /// Types that can be iterated with `for x in ...`.
+  bool isIterable() const { return kind_ == TypeKind::Array || kind_ == TypeKind::List; }
   bool isScalar() const {
     return isInteger() || kind_ == TypeKind::Bool || kind_ == TypeKind::Str;
   }
@@ -139,12 +151,18 @@ class TypeTable {
   Type element(Type type) const;
   std::uint64_t length(Type type) const;
 
+  /// Type of a growable list whose elements have type `element`.
+  Type list(Type element);
+  /// Element type of a list type, or Type::error() for anything else.
+  Type listElement(Type type) const;
+
  private:
   struct Entry {
     Type element;
     std::uint64_t length = 0;
   };
   std::vector<Entry> entries_;
+  std::vector<Type> lists_;
 };
 
 struct Module;

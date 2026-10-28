@@ -41,6 +41,17 @@ typedef struct {
   int64_t len;
 } gable_str;
 
+/* A growable list. A list value is a handle to shared storage: copying the value
+ * copies the reference, so every copy sees the same elements, and `list_push`
+ * on one is visible through all of them. The elements are stored `stride` bytes
+ * apart, which is how one implementation serves every element type. */
+typedef struct gable_rt_list {
+  void *data;
+  int64_t len;
+  int64_t capacity;
+  int64_t stride;
+} *gable_list;
+
 /* Prelude structs. Field order matches compiler/include/gable/prelude.h. */
 typedef struct {
   bool ok;
@@ -167,6 +178,14 @@ uint64_t gable_rt_rem_u64(uint64_t lhs, uint64_t rhs);
  * written; out-of-range access traps through this function so the message and
  * exit status are defined by the runtime. */
 GABLE_NORETURN void gable_rt_index_error(int64_t index, int64_t length);
+
+/* Creates an empty list whose elements are `element_size` bytes each. */
+gable_list gable_rt_list_new(int64_t element_size);
+/* Appends a copy of `*element`. */
+void gable_rt_list_push(gable_list list, const void *element);
+/* Address of element `index`; traps when the index is out of range. */
+void *gable_rt_list_at(gable_list list, int64_t index);
+int64_t gable_rt_list_len(gable_list list);
 
 /* Strings. Concatenation allocates and the result lives until the process
  * exits: Gable v0.2 has no memory reclamation (docs/specification.md). */

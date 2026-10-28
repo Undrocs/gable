@@ -95,9 +95,9 @@ clear message when `GABLE_WITH_LLVM=ON` but LLVM is missing.
 Each item requires a specification update, implementation, and tests before it is
 merged.
 
-* Growable arrays and maps on top of the runtime heap.
-* A string builder for repeated concatenation, so building a string of length *n*
-  costs *O(n)* rather than *O(n²)*.
+* Maps and sets on top of the runtime heap.
+* A string builder, and joining a list of strings, so building a string of length
+  *n* costs *O(n)* rather than *O(n²)*.
 * Character-level text operations and formatting.
 * Enums, tuples, and a sum type for error handling.
 * Bitwise and shift operators.

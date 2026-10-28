@@ -54,7 +54,8 @@ paths, so tests and future tooling drive it directly.
 | `compiler/include/gable/temporary.h`, `src/driver/temporary.cpp` | Private temporary directories |
 | `compiler/include/gable/cli.h`, `src/cli/cli.cpp` | Argument parsing, command dispatch, exit codes |
 | `runtime/include/gable/rt.h`, `runtime/src/*.c` | C17 runtime with a C ABI |
-| `runtime/src/gc.c`, `runtime/src/stack_top.c` | Heap for `str` and file buffers, conservative mark-and-sweep collector, and each host's stack bounds |
+| `runtime/src/gc.c`, `runtime/src/stack_top.c` | Heap for `str`, lists, and file buffers; conservative mark-and-sweep collector; each host's stack bounds |
+| `runtime/src/list.c` | Growable lists: storage that doubles, element stride chosen by the compiler |
 
 ## Loading and imports
 
@@ -99,6 +100,13 @@ Two details matter for correctness and are easy to get wrong:
   between stack variables, and a conservative scan walks through them. The scan
   skips a word that is not fully addressable, which cannot lose a live pointer but
   keeps sanitizer builds usable.
+
+Lists are handles to a heap block that holds the elements, the count, the capacity,
+and the element stride. The compiler knows the element type, so one runtime
+implementation serves every element type: the generated code passes addresses of
+elements and copies them back out with `memcpy`. A list element is therefore not a
+C lvalue, and an assignment whose target is rooted in a list element is lowered to
+a `memcpy` into the storage the runtime returns rather than to a C assignment.
 
 `gable_rt_init()` is called first in the generated entry point. It records the
 stack top, enables the collector, and registers an `atexit` handler that frees
