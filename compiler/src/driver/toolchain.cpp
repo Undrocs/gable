@@ -153,6 +153,18 @@ CCompilerFamily familyOf(const std::string& compiler) {
   return CCompilerFamily::GnuStyle;
 }
 
+/// Splits `GABLE_CC_FLAGS` on whitespace. Quoting is not interpreted: the value
+/// is a list of flags, and a flag that needs a space in it can use `=` instead.
+std::vector<std::string> extraCompilerFlags() {
+  std::vector<std::string> flags;
+  std::istringstream stream(environmentOr("GABLE_CC_FLAGS", ""));
+  std::string flag;
+  while (stream >> flag) {
+    flags.push_back(flag);
+  }
+  return flags;
+}
+
 std::vector<std::string> compilerArguments(CCompilerFamily family, const std::string& compiler,
                                           const std::string& cPath, const std::string& outputPath,
                                           const std::string& includeDir,
@@ -161,7 +173,7 @@ std::vector<std::string> compilerArguments(CCompilerFamily family, const std::st
     const std::string level = optimizationLevel >= 2 ? "/O2"
                               : optimizationLevel == 1 ? "/O1"
                                                        : "/Od";
-    return {
+    std::vector<std::string> arguments = {
         compiler,
         "/nologo",
         "/std:c17",
@@ -175,23 +187,31 @@ std::vector<std::string> compilerArguments(CCompilerFamily family, const std::st
         // Keep the object file next to the generated C, inside the temporary
         // directory, instead of in the current working directory.
         "/Fo" + cPath + ".obj",
-        cPath,
-        libraryPath,
-        "/Fe" + outputPath,
     };
+    for (const std::string& flag : extraCompilerFlags()) {
+      arguments.push_back(flag);
+    }
+    arguments.push_back(cPath);
+    arguments.push_back(libraryPath);
+    arguments.push_back("/Fe" + outputPath);
+    return arguments;
   }
-  return {
+  std::vector<std::string> arguments = {
       compiler,
       "-std=c17",
       "-O" + std::to_string(optimizationLevel),
       "-Wall",
       "-Wextra",
       "-I" + includeDir,
-      cPath,
-      libraryPath,
-      "-o",
-      outputPath,
   };
+  for (const std::string& flag : extraCompilerFlags()) {
+    arguments.push_back(flag);
+  }
+  arguments.push_back(cPath);
+  arguments.push_back(libraryPath);
+  arguments.push_back("-o");
+  arguments.push_back(outputPath);
+  return arguments;
 }
 
 /// Runs the frontend, writing diagnostics on failure.

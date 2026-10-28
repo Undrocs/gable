@@ -38,6 +38,20 @@ class Parser {
 
   bool depthExceeded(const char* context);
 
+  /// Reports a resource-limit error once and stops parsing when the limit is
+  /// reached. Used both for nesting depth and for the node budget.
+  bool limitReached(SourceSpan span, std::string message);
+
+  /// Checks that an expression tree of `depth` levels is still within the limit,
+  /// reporting one diagnostic and stopping parsing when it is not.
+  bool growTreeDepth(int depth, SourceSpan span);
+
+  /// Counts one syntax node against the per-file budget. Parsing stops with a
+  /// diagnostic when the budget is exhausted, so a large input produces one
+  /// error instead of exhausting memory.
+  bool consumeNodeBudget();
+
+
   // Declarations.
   std::unique_ptr<ast::FunctionDecl> parseFunction();
   std::unique_ptr<ast::StructDecl> parseStruct();
@@ -88,8 +102,16 @@ class Parser {
   std::size_t index_ = 0;
   std::size_t previousEnd_ = 0;
   int depth_ = 0;
-  /// Set once the nesting limit is reached; parsing then stops rather than
-  /// attempting further recovery, which keeps memory and time bounded.
+  /// Depth of the expression tree most recently produced by parseExpression,
+  /// parsePrefix, or parsePostfix. Left-associative operator chains are parsed in
+  /// a loop, so the recursion guard alone does not bound the depth of the tree
+  /// they build; this counter does.
+  int expressionDepth_ = 0;
+  /// Syntax nodes created for this file, against the per-file budget.
+  std::size_t nodeCount_ = 0;
+  /// Set once a resource limit (nesting or node budget) is reached; parsing then
+  /// stops rather than attempting further recovery, which keeps memory and time
+  /// bounded.
   bool depthLimitExceeded_ = false;
   /// Set after the first non-import declaration, so imports must come first.
   bool sawDeclaration_ = false;

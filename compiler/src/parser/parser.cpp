@@ -1,5 +1,7 @@
 #include "gable/parser.h"
 
+#include <algorithm>
+
 #include <string>
 #include <utility>
 
@@ -28,9 +30,15 @@ bool isTypeKeyword(TokenKind kind) {
 /// How many tokens to skip when a declaration cannot be parsed.
 constexpr std::size_t kMaxSynchronizeSteps = 4096;
 
-/// Maximum nesting depth for expressions and blocks. Well beyond anything
+/// Maximum nesting depth for expressions, blocks, and types. Well beyond anything
 /// readable, low enough to keep the recursive-descent parser's stack bounded.
 constexpr int kMaxNestingDepth = 200;
+
+/// Maximum number of syntax nodes in one source file. A file is at most 64 MiB,
+/// which already bounds this, but a million tiny expressions is both useless and
+/// expensive to analyse: the budget turns it into a diagnostic instead of a
+/// process that runs out of memory.
+constexpr std::size_t kMaxSyntaxNodes = 2'000'000;
 
 }  // namespace
 
@@ -45,12 +53,26 @@ bool Parser::depthExceeded(const char* context) {
   if (depth_ <= kMaxNestingDepth) {
     return false;
   }
+  return limitReached(current().span, std::string(context) + " is nested too deeply (limit " +
+                                            std::to_string(kMaxNestingDepth) + " levels)");
+}
+
+bool Parser::limitReached(SourceSpan span, std::string message) {
   if (!depthLimitExceeded_) {
     depthLimitExceeded_ = true;
-    error(current().span, std::string(context) + " is nested too deeply (limit " +
-                              std::to_string(kMaxNestingDepth) + " levels)");
+    error(span, std::move(message));
   }
   return true;
+}
+
+bool Parser::consumeNodeBudget() {
+  ++nodeCount_;
+  if (nodeCount_ <= kMaxSyntaxNodes) {
+    return true;
+  }
+  return limitReached(current().span,
+                      "this file contains more than " + std::to_string(kMaxSyntaxNodes) +
+                          " syntax nodes; split it into smaller files");
 }
 
 void Parser::error(SourceSpan span, std::string message) {
@@ -325,6 +347,10 @@ std::unique_ptr<ast::StructDecl> Parser::parseStruct() {
 }
 
 ast::TypeSyntax Parser::parseTypeAnnotation() {
+  DepthGuard guard(*this);
+  if (depthExceeded("type")) {
+    return ast::TypeSyntax{};
+  }
   ast::TypeSyntax type;
 
   if (check(TokenKind::LBracket)) {
@@ -400,6 +426,16 @@ std::vector<std::unique_ptr<ast::Stmt>> Parser::parseBlock() {
 
 std::unique_ptr<ast::Stmt> Parser::parseStatement() {
   if (depthLimitExceeded_) {
+    return nullptr;
+  }
+  // A statement can contain another statement without passing through a block,
+  // as `else if` chains do, so statement nesting needs its own guard: otherwise
+  // the parser, the analyser, and the destructor all recurse once per link.
+  DepthGuard guard(*this);
+  if (depthExceeded("statement")) {
+    return nullptr;
+  }
+  if (!consumeNodeBudget()) {
     return nullptr;
   }
   switch (current().kind) {
@@ -546,6 +582,12 @@ std::unique_ptr<ast::Stmt> Parser::parseReturnStatement() {
 }
 
 std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
+  // `else if` recurses through this function rather than through parseStatement,
+  // so the chain needs a guard of its own as well.
+  DepthGuard guard(*this);
+  if (depthExceeded("if/else chain")) {
+    return nullptr;
+  }
   const Token& begin = advance();  // 'if'
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::If, begin.span);
 
@@ -690,13 +732,17 @@ BinaryOp Parser::binaryOpFor(TokenKind kind) const {
 
 ast::ExprPtr Parser::parseExpression(int minPrecedence) {
   DepthGuard guard(*this);
-  if (depthExceeded("expression")) {
+  if (depthExceeded("expression") || !consumeNodeBudget()) {
     return nullptr;
   }
   ast::ExprPtr left = parsePrefix();
   if (!left) {
     return nullptr;
   }
+  // `expressionDepth_` now holds the depth of `left`. Each operator parsed
+  // below wraps it in one more node, so the depth grows with every iteration of
+  // the loop, not with the recursion of the parser.
+  int treeDepth = expressionDepth_;
 
   for (;;) {
     const TokenKind kind = current().kind;
@@ -708,6 +754,10 @@ ast::ExprPtr Parser::parseExpression(int minPrecedence) {
       if (!right) {
         return nullptr;
       }
+      if (!growTreeDepth(std::max(treeDepth, expressionDepth_) + 1, opToken.span)) {
+        return nullptr;
+      }
+      treeDepth = std::max(treeDepth, expressionDepth_) + 1;
       auto range = std::make_unique<ast::Expr>(ast::Expr::Kind::Range, opToken.span);
       range->span = SourceSpan{left->span.begin, right->span.end};
       range->lhs = std::move(left);
@@ -724,6 +774,10 @@ ast::ExprPtr Parser::parseExpression(int minPrecedence) {
     if (!right) {
       return nullptr;
     }
+    if (!growTreeDepth(std::max(treeDepth, expressionDepth_) + 1, opToken.span)) {
+      return nullptr;
+    }
+    treeDepth = std::max(treeDepth, expressionDepth_) + 1;
     auto binary = std::make_unique<ast::Expr>(ast::Expr::Kind::Binary, opToken.span);
     binary->binaryOp = binaryOpFor(kind);
     binary->span = SourceSpan{left->span.begin, right->span.end};
@@ -731,7 +785,18 @@ ast::ExprPtr Parser::parseExpression(int minPrecedence) {
     binary->rhs = std::move(right);
     left = std::move(binary);
   }
+  expressionDepth_ = treeDepth;
   return left;
+}
+
+bool Parser::growTreeDepth(int depth, SourceSpan span) {
+  if (depth <= kMaxNestingDepth) {
+    return true;
+  }
+  return limitReached(span, "expression is too large (limit " +
+                                std::to_string(kMaxNestingDepth) +
+                                " levels of operators and operands); split it into "
+                                "smaller statements");
 }
 
 ast::ExprPtr Parser::parsePrefix() {
@@ -744,6 +809,10 @@ ast::ExprPtr Parser::parsePrefix() {
       if (!operand) {
         return nullptr;
       }
+      if (!growTreeDepth(expressionDepth_ + 1, token.span)) {
+        return nullptr;
+      }
+      expressionDepth_ += 1;
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::Unary, token.span);
       expr->unaryOp = token.kind == TokenKind::Minus ? UnaryOp::Negate : UnaryOp::LogicalNot;
       expr->span = SourceSpan{token.span.begin, operand->span.end};
@@ -770,12 +839,14 @@ ast::ExprPtr Parser::parsePrimary() {
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::IntegerLiteral, token.span);
       expr->integerValue = token.integerValue;
       expr->unsignedLiteral = token.unsignedLiteral;
+      expressionDepth_ = 1;
       return parsePostfix(std::move(expr));
     }
     case TokenKind::StringLiteral: {
       advance();
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::StringLiteral, token.span);
       expr->stringValue = token.stringValue;
+      expressionDepth_ = 1;
       return parsePostfix(std::move(expr));
     }
     case TokenKind::KwTrue:
@@ -783,6 +854,7 @@ ast::ExprPtr Parser::parsePrimary() {
       advance();
       auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::BoolLiteral, token.span);
       expr->boolValue = token.kind == TokenKind::KwTrue;
+      expressionDepth_ = 1;
       return parsePostfix(std::move(expr));
     }
     case TokenKind::Identifier: {
@@ -790,17 +862,20 @@ ast::ExprPtr Parser::parsePrimary() {
       if (!check(TokenKind::LParen)) {
         auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::Name, token.span);
         expr->name = token.text;
+        expressionDepth_ = 1;
         return parsePostfix(std::move(expr));
       }
       advance();  // '('
       auto call = std::make_unique<ast::Expr>(ast::Expr::Kind::Call, token.span);
       call->name = token.text;
+      int argumentDepth = 0;
       if (!check(TokenKind::RParen)) {
         for (;;) {
           ast::ExprPtr argument = parseExpression(0);
           if (!argument) {
             return nullptr;
           }
+          argumentDepth = std::max(argumentDepth, expressionDepth_);
           call->arguments.push_back(std::move(argument));
           if (match(TokenKind::Comma)) {
             continue;
@@ -814,17 +889,23 @@ ast::ExprPtr Parser::parsePrimary() {
       }
       const Token& close = advance();
       call->span = SourceSpan{token.span.begin, close.span.end};
+      if (!growTreeDepth(argumentDepth + 1, token.span)) {
+        return nullptr;
+      }
+      expressionDepth_ = argumentDepth + 1;
       return parsePostfix(std::move(call));
     }
     case TokenKind::LBracket: {
       advance();
       auto literal = std::make_unique<ast::Expr>(ast::Expr::Kind::ArrayLiteral, token.span);
+      int elementDepth = 0;
       if (!check(TokenKind::RBracket)) {
         for (;;) {
           ast::ExprPtr element = parseExpression(0);
           if (!element) {
             return nullptr;
           }
+          elementDepth = std::max(elementDepth, expressionDepth_);
           literal->arguments.push_back(std::move(element));
           if (match(TokenKind::Comma)) {
             if (check(TokenKind::RBracket)) {
@@ -841,6 +922,10 @@ ast::ExprPtr Parser::parsePrimary() {
       }
       const Token& close = advance();
       literal->span = SourceSpan{token.span.begin, close.span.end};
+      if (!growTreeDepth(elementDepth + 1, token.span)) {
+        return nullptr;
+      }
+      expressionDepth_ = elementDepth + 1;
       return parsePostfix(std::move(literal));
     }
     case TokenKind::LParen: {
@@ -867,6 +952,9 @@ ast::ExprPtr Parser::parsePrimary() {
 }
 
 ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
+  // `expressionDepth_` describes `base` on entry and is updated as each postfix
+  // operator is applied, so a long `a.b[i].c` chain is bounded as well.
+  int baseDepth = expressionDepth_;
   for (;;) {
     if (check(TokenKind::Dot)) {
       advance();
@@ -876,6 +964,11 @@ ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
         return nullptr;
       }
       const Token& field = advance();
+      if (!growTreeDepth(baseDepth + 1, field.span)) {
+        return nullptr;
+      }
+      baseDepth += 1;
+      expressionDepth_ = baseDepth;
       auto access = std::make_unique<ast::Expr>(ast::Expr::Kind::FieldAccess, field.span);
       access->span = SourceSpan{base->span.begin, field.span.end};
       access->fieldName = field.text;
@@ -895,6 +988,11 @@ ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
         return nullptr;
       }
       const Token& close = advance();
+      if (!growTreeDepth(std::max(baseDepth, expressionDepth_) + 1, open.span)) {
+        return nullptr;
+      }
+      baseDepth = std::max(baseDepth, expressionDepth_) + 1;
+      expressionDepth_ = baseDepth;
       auto access = std::make_unique<ast::Expr>(ast::Expr::Kind::Index, open.span);
       access->span = SourceSpan{base->span.begin, close.span.end};
       access->lhs = std::move(base);
@@ -909,6 +1007,11 @@ ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
       if (!cast->targetType.isValid()) {
         return nullptr;
       }
+      if (!growTreeDepth(baseDepth + 1, keyword.span)) {
+        return nullptr;
+      }
+      baseDepth += 1;
+      expressionDepth_ = baseDepth;
       cast->span = SourceSpan{base->span.begin, cast->targetType.span.end};
       cast->lhs = std::move(base);
       base = std::move(cast);

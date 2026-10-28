@@ -10,7 +10,8 @@
 //   expected_stderr_contains.txt    substrings that must appear on stderr (optional)
 //   program_args.txt                one argument per line, passed after `--`;
 //                                   %SCRATCH% expands to a per-case scratch path
-//                                   so that cases can exercise file I/O
+//                                   so that cases can exercise file I/O, and
+//                                   %DATA:<name>% to a copy of data/<name>
 //   compile_error.txt               when present, compilation must fail with exit
 //                                   status 1 and stderr must contain every line
 //
@@ -109,6 +110,29 @@ struct Runner {
             ? readLines(directory / "expected_stderr_contains.txt")
             : std::vector<std::string>{};
 
+    // Files under `data/` are copied into the scratch directory before the
+    // program runs, and `%DATA:<name>%` in program_args.txt expands to the copy.
+    // This gives a case a fixture it can read — including binary content, which a
+    // Gable string literal cannot express.
+    std::vector<std::pair<std::string, std::string>> fixtures;
+    const fs::path dataDirectory = directory / "data";
+    if (fs::is_directory(dataDirectory)) {
+      for (const auto& entry : fs::directory_iterator(dataDirectory)) {
+        if (!entry.is_regular_file()) {
+          continue;
+        }
+        const std::string fileName = entry.path().filename().string();
+        const std::string destination = scratchDir + "/" + name + "-" + fileName;
+        std::error_code copyError;
+        fs::copy_file(entry.path(), destination, fs::copy_options::overwrite_existing, copyError);
+        if (copyError) {
+          fail(name, "cannot copy fixture " + fileName + ": " + copyError.message());
+          return;
+        }
+        fixtures.emplace_back(fileName, destination);
+      }
+    }
+
     std::vector<std::string> programArguments;
     if (fs::exists(directory / "program_args.txt")) {
       const std::string scratchPath = scratchDir + "/" + name + "-data.txt";
@@ -118,6 +142,14 @@ struct Runner {
         const std::size_t found = argument.find(placeholder);
         if (found != std::string::npos) {
           argument.replace(found, placeholder.size(), scratchPath);
+        }
+        for (const auto& fixture : fixtures) {
+          const std::string marker = "%DATA:" + fixture.first + "%";
+          std::size_t position = argument.find(marker);
+          while (position != std::string::npos) {
+            argument.replace(position, marker.size(), fixture.second);
+            position = argument.find(marker, position + fixture.second.size());
+          }
         }
         programArguments.push_back(argument);
       }

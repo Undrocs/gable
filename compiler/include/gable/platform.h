@@ -41,6 +41,18 @@ std::string executableSuffix();
 /// step. On success `source` no longer exists.
 bool replaceFile(const std::string& source, const std::string& destination, std::string& error);
 
+/// Creates `path` as a new directory. Fails, rather than reusing it, when
+/// anything already exists at that path. On POSIX the directory is created with
+/// owner-only permissions (0700), so nothing else can add entries to it; on
+/// Windows it inherits the access control list of its parent, which is the
+/// user's own directory in every case where the compiler is used.
+bool createDirectoryExclusive(const std::string& path, std::string& error);
+
+/// Creates `path` and writes `contents` to it, failing when anything already
+/// exists there, including a symbolic link (exclusive creation: O_EXCL on POSIX,
+/// CREATE_NEW on Windows). The file is removed again if writing fails.
+bool writeNewFile(const std::string& path, const std::string& contents, std::string& error);
+
 }  // namespace gable::platform
 
 #endif  // GABLE_PLATFORM_H

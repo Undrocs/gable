@@ -23,11 +23,13 @@ struct FileReadResult {
     ok: bool,
     text: str,
     error: str,
+    code: i32,
 }
 
 struct FileWriteResult {
     ok: bool,
     error: str,
+    code: i32,
 }
 
 struct ParseResult {

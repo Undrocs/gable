@@ -1,0 +1,8 @@
+8
+9
+18
+false
+file path contains a NUL byte
+3
+false
+3

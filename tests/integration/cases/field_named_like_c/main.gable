@@ -1,0 +1,40 @@
+// A Gable field name only has to be a Gable identifier. The generated C member
+// must nevertheless avoid C keywords, names that the C library defines as macros,
+// and identifiers the compiler generates for itself.
+struct Reserved {
+    switch: i32,
+    case: i32,
+    default: i32,
+    int: i32,
+    errno: i32,
+    NULL: i32,
+    assert: i32,
+    stdin: i32,
+    gable_fn_main: i32,
+    gable_s_Reserved: i32,
+    gable_rt_print_i64: i32,
+}
+
+struct Nested {
+    inner: Reserved,
+    label: str,
+}
+
+fn read_value(config: Reserved) -> i32 {
+    return config.switch + config.case + config.default;
+}
+
+fn main() -> i32 {
+    let config: Reserved = Reserved(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+    print(read_value(config));
+    print(config.int);
+    print(config.errno + config.NULL + config.assert + config.stdin);
+    print(config.gable_fn_main + config.gable_s_Reserved + config.gable_rt_print_i64);
+
+    var nested: Nested = Nested(config, "label");
+    nested.inner.default = 30;
+    print(nested.inner.default);
+    print(nested.label);
+    print(config.default);
+    return 0;
+}

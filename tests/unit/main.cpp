@@ -1,5 +1,11 @@
+// Usage: gable_unit_tests [name-filter]
+//
+// Without an argument every registered test runs. With an argument only tests
+// whose name contains it run, which makes a single regression easy to reproduce
+// without waiting for the whole suite.
 #include "test_framework.h"
 
+#include <cstring>
 #include <iostream>
 
 namespace gabletest {
@@ -15,10 +21,14 @@ Registrar::Registrar(const char* name, void (*function)()) {
 
 }  // namespace gabletest
 
-int main() {
+int main(int argc, char** argv) {
+  const char* filter = argc > 1 ? argv[1] : nullptr;
   std::size_t failures = 0;
   std::size_t run = 0;
   for (const gabletest::TestCase& test : gabletest::registry()) {
+    if (filter != nullptr && std::strstr(test.name, filter) == nullptr) {
+      continue;
+    }
     ++run;
     try {
       test.function();
@@ -34,6 +44,10 @@ int main() {
     }
   }
 
+  if (run == 0) {
+    std::cerr << "no test matches '" << (filter == nullptr ? "" : filter) << "'\n";
+    return 2;
+  }
   std::cout << (failures == 0 ? "PASS " : "FAILED ") << (run - failures) << "/" << run
             << " unit tests\n";
   return failures == 0 ? 0 : 1;

@@ -1,10 +1,8 @@
 #include "gable/output.h"
 
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
+#include <cstdint>
 #include <filesystem>
-#include <fstream>
+#include <random>
 #include <system_error>
 #include <utility>
 
@@ -30,13 +28,36 @@ fs::path resolvedForComparison(const std::string& path) {
   return resolved;
 }
 
-std::string randomSuffix() {
-  // Process id plus a monotonically increasing counter. Temporary files are
-  // created in the target's own directory, so this is enough to avoid collisions
-  // between concurrent compilations without pulling in a random source.
+/// Unpredictable token for a staging directory name.
+///
+/// A predictable name is what makes a temporary file attack possible: anyone who
+/// can write to the directory could create the name first, as a symbolic link or
+/// a regular file. The token mixes random bits from the operating system with the
+/// process id, and the caller additionally relies on exclusive creation, so a
+/// collision is a retry rather than a vulnerability.
+std::string uniqueToken() {
+  static std::random_device device;
   static unsigned counter = 0;
   ++counter;
-  return std::to_string(platform::processId()) + "-" + std::to_string(counter);
+  const std::uint64_t bits = (static_cast<std::uint64_t>(device()) << 32) ^ device();
+  static const char* kHex = "0123456789abcdef";
+  std::string token;
+  token.reserve(20);
+  for (int shift = 60; shift >= 0; shift -= 4) {
+    token.push_back(kHex[(bits >> shift) & 0x0F]);
+  }
+  token += "-" + std::to_string(platform::processId()) + "-" + std::to_string(counter);
+  return token;
+}
+
+/// Removes a directory if it is empty. Used for the staging directory, which
+/// contains only the temporary output.
+void removeIfEmpty(const std::string& path) {
+  if (path.empty()) {
+    return;
+  }
+  std::error_code ignored;
+  fs::remove(path, ignored);
 }
 
 }  // namespace
@@ -66,7 +87,7 @@ std::string findInputAlias(const std::string& target, const std::vector<std::str
 }
 
 std::optional<AtomicOutputFile> AtomicOutputFile::create(const std::string& target,
-                                                        std::string& error) {
+                                                         std::string& error) {
   const fs::path targetPath(target);
   fs::path directory = targetPath.parent_path();
   if (directory.empty()) {
@@ -83,18 +104,46 @@ std::optional<AtomicOutputFile> AtomicOutputFile::create(const std::string& targ
     return std::nullopt;
   }
 
-  const fs::path temporary = directory / ("." + targetPath.filename().string() + ".gable-tmp-" +
-                                          randomSuffix());
-  return AtomicOutputFile(target, temporary.string());
+  // The new file is produced inside a directory that is created for this
+  // compilation alone, next to the destination so that the final move stays on
+  // one file system and therefore atomic. Nothing else can add entries to that
+  // directory, so no attacker-chosen name can be in the way.
+  std::string stagingPath;
+  std::string stagingError;
+  for (int attempt = 0; attempt < 64; ++attempt) {
+    const fs::path candidate = directory / (".gable-out-" + uniqueToken());
+    if (platform::createDirectoryExclusive(candidate.string(), stagingError)) {
+      stagingPath = candidate.string();
+      break;
+    }
+    if (stagingError.find("exists") == std::string::npos) {
+      break;
+    }
+  }
+  if (stagingPath.empty()) {
+    error = "cannot prepare the output next to '" + target + "': " + stagingError;
+    return std::nullopt;
+  }
+
+  std::string temporaryPath = (fs::path(stagingPath) / ("output" + platform::executableSuffix())).string();
+  return AtomicOutputFile(target, std::move(temporaryPath), stagingPath);
 }
+
+AtomicOutputFile::AtomicOutputFile(std::string targetPath, std::string temporaryPath,
+                                  std::string stagingPath)
+    : targetPath_(std::move(targetPath)),
+      temporaryPath_(std::move(temporaryPath)),
+      stagingPath_(std::move(stagingPath)) {}
 
 AtomicOutputFile::AtomicOutputFile(AtomicOutputFile&& other) noexcept
     : targetPath_(std::move(other.targetPath_)),
       temporaryPath_(std::move(other.temporaryPath_)),
+      stagingPath_(std::move(other.stagingPath_)),
       committed_(other.committed_) {
   other.targetPath_.clear();
   other.temporaryPath_.clear();
-  other.committed_ = true;  // a moved-from object must not remove the temp file
+  other.stagingPath_.clear();
+  other.committed_ = true;  // a moved-from object must not remove anything
 }
 
 AtomicOutputFile& AtomicOutputFile::operator=(AtomicOutputFile&& other) noexcept {
@@ -102,9 +151,11 @@ AtomicOutputFile& AtomicOutputFile::operator=(AtomicOutputFile&& other) noexcept
     discard();
     targetPath_ = std::move(other.targetPath_);
     temporaryPath_ = std::move(other.temporaryPath_);
+    stagingPath_ = std::move(other.stagingPath_);
     committed_ = other.committed_;
     other.targetPath_.clear();
     other.temporaryPath_.clear();
+    other.stagingPath_.clear();
     other.committed_ = true;
   }
   return *this;
@@ -113,23 +164,25 @@ AtomicOutputFile& AtomicOutputFile::operator=(AtomicOutputFile&& other) noexcept
 AtomicOutputFile::~AtomicOutputFile() { discard(); }
 
 void AtomicOutputFile::discard() {
-  if (!committed_ && !temporaryPath_.empty()) {
+  if (!committed_) {
     std::error_code ignored;
     fs::remove(temporaryPath_, ignored);
+    removeIfEmpty(stagingPath_);
   }
   committed_ = true;  // idempotent
 }
 
 bool AtomicOutputFile::write(const std::string& contents, std::string& error) {
-  std::ofstream file(temporaryPath_, std::ios::binary | std::ios::trunc);
-  if (!file) {
-    error = "cannot create '" + temporaryPath_ + "': " + std::strerror(errno);
+  if (temporaryPath_.empty()) {
+    error = "internal error: no temporary file to write";
     return false;
   }
-  file.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-  file.close();
-  if (!file) {
-    error = "failed while writing '" + temporaryPath_ + "'";
+  std::string platformError;
+  // Exclusive creation: the path is inside a directory this compilation owns, and
+  // even if that were not the case this call refuses to write through anything
+  // that already exists there.
+  if (!platform::writeNewFile(temporaryPath_, contents, platformError)) {
+    error = "cannot write '" + targetPath_ + "': " + platformError;
     return false;
   }
   return true;
@@ -151,9 +204,11 @@ bool AtomicOutputFile::commit(std::string& error) {
     error = "cannot create '" + targetPath_ + "': " + error;
     std::error_code cleanup;
     fs::remove(temporaryPath_, cleanup);
+    removeIfEmpty(stagingPath_);
     committed_ = true;  // the temporary file is handled either way
     return false;
   }
+  removeIfEmpty(stagingPath_);
   committed_ = true;
   return true;
 }

@@ -11,8 +11,14 @@
 
 #include <windows.h>
 
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 namespace gable::platform {
@@ -134,6 +140,56 @@ std::string createTemporaryDirectory(std::string& error) {
 std::string defaultCCompiler() { return "cl"; }
 
 std::string executableSuffix() { return ".exe"; }
+
+bool createDirectoryExclusive(const std::string& path, std::string& error) {
+  const std::wstring widePath = widen(path);
+  if (widePath.empty()) {
+    error = "cannot convert the directory name to UTF-16";
+    return false;
+  }
+  if (::CreateDirectoryW(widePath.c_str(), nullptr) != 0) {
+    return true;
+  }
+  error = lastErrorMessage(::GetLastError());
+  return false;
+}
+
+bool writeNewFile(const std::string& path, const std::string& contents, std::string& error) {
+  const std::wstring widePath = widen(path);
+  if (widePath.empty()) {
+    error = "cannot convert the file name to UTF-16";
+    return false;
+  }
+  // _O_EXCL fails when anything already exists at the path, including a
+  // symbolic link or a hard link, instead of writing through it.
+  const int descriptor =
+      ::_wopen(widePath.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY | _O_NOINHERIT,
+               _S_IREAD | _S_IWRITE);
+  if (descriptor < 0) {
+    error = std::strerror(errno);
+    return false;
+  }
+
+  std::size_t written = 0;
+  while (written < contents.size()) {
+    const int count = ::_write(descriptor, contents.data() + written,
+                               static_cast<unsigned int>(contents.size() - written));
+    if (count < 0) {
+      error = std::strerror(errno);
+      ::_close(descriptor);
+      ::_wunlink(widePath.c_str());
+      return false;
+    }
+    written += static_cast<std::size_t>(count);
+  }
+
+  if (::_close(descriptor) != 0) {
+    error = std::strerror(errno);
+    ::_wunlink(widePath.c_str());
+    return false;
+  }
+  return true;
+}
 
 bool replaceFile(const std::string& source, const std::string& destination, std::string& error) {
   const std::wstring wideSource = widen(source);
