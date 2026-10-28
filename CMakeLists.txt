@@ -190,6 +190,17 @@ if(BUILD_TESTING)
   )
   set_tests_properties(notes_tool PROPERTIES TIMEOUT 300)
 
+  # The runtime's file builtins are tested directly in C: a Gable program cannot
+  # build a path with a NUL byte or a file above the size limit. The test needs
+  # fork(), chmod() and ftruncate() and has not been exercised on Windows, so it
+  # is not registered there.
+  if(NOT WIN32)
+    add_executable(fs_tests runtime/tests/fs_tests.c)
+    target_link_libraries(fs_tests PRIVATE gable_runtime)
+    add_test(NAME runtime_files COMMAND fs_tests)
+    set_tests_properties(runtime_files PROPERTIES TIMEOUT 120)
+  endif()
+
   add_executable(gable_integration_tests tests/integration/integration_tests.cpp)
   target_link_libraries(gable_integration_tests PRIVATE gable_compiler)
   add_test(NAME integration

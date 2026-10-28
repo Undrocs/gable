@@ -18,15 +18,16 @@ please report it.
 | Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
 | Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
 | Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70 |
-| Testing | 197 unit tests, 53 integration cases, 10 examples, 40 notes-tool tests, sanitizer configuration |
+| Testing | 211 unit tests, 58 integration cases, 10 examples, 83 notes-tool tests, 79 runtime file tests, sanitizer configuration |
 
 ## Known bugs and rough edges
 
 * **No memory reclamation.** Strings built at run time and file contents are never
   freed. A long-running program that concatenates strings grows without bound.
   This is the largest known consequence of the v0.2 design (ADR 0017).
-* **No dynamic arrays or maps.** Every array has a compile-time length. Tools must
-  use fixed-size storage or stream over their data, as `tools/notes` does.
+* **No dynamic arrays or maps.** Every array has a compile-time length. A program
+  that needs an unbounded sequence has to read its input whole, as `tools/notes`
+  does with the notes file, or keep a fixed-size buffer.
 * **Exit status ambiguity under `run`.** A program returning 1, 2, or 70 is
   indistinguishable from a compiler failure by exit status alone.
 * **No debug information for Gable source.** Debugging a generated executable means

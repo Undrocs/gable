@@ -68,9 +68,9 @@ before new surface area.
 * An acceptance program: `tools/notes`, a multi-file task list that takes
   arguments, uses structs and strings, and reads and writes a text file.
 
-Verified by: 197 unit tests, 53 integration cases, 10 examples, and 40 notes-tool
-tests, all passing in Debug and under AddressSanitizer/UBSan on Linux, plus the
-same suites on Windows with MSVC.
+Verified by: 211 unit tests, 58 integration cases, 10 examples, 83 notes-tool
+tests, and 79 runtime file tests, all passing in Debug and under
+AddressSanitizer/UBSan on Linux, plus the compiler suites on Windows with MSVC.
 
 ## Milestone 6 — LLVM backend
 

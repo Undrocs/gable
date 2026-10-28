@@ -445,6 +445,9 @@ reserved.
 | `arg(index)` | `i32 -> str` | argument at `index`; empty string when out of range |
 | `fs_read_text(path)` | `str -> FileReadResult` | reads a whole file |
 | `fs_write_text(path, text)` | `str, str -> FileWriteResult` | replaces a whole file |
+| `fs_write_text_atomic(path, text)` | `str, str -> FileWriteResult` | replaces a whole file, or leaves the old one |
+| `fs_lock(path)` | `str -> FileWriteResult` | takes the advisory lock for `path` |
+| `fs_unlock(path)` | `str -> FileWriteResult` | releases the advisory lock for `path` |
 | `str_of_i64(value)` | `i64 -> str` | decimal representation |
 | `str_of_bool(value)` | `bool -> str` | `"true"` or `"false"` |
 | `parse_i64(text)` | `str -> ParseResult` | optional sign, surrounding ASCII whitespace ignored, overflow rejected |
@@ -456,19 +459,59 @@ The result types are ordinary structs declared by the prelude, so their fields
 are read like any other struct:
 
 ```gable
-struct FileReadResult { ok: bool, text: str, error: str }
-struct FileWriteResult { ok: bool, error: str }
+struct FileReadResult  { ok: bool, text: str, error: str, code: i32 }
+struct FileWriteResult { ok: bool, error: str, code: i32 }
 struct ParseResult     { ok: bool, value: i64 }
 struct FindResult      { ok: bool, index: i64 }
 struct SliceResult     { ok: bool, text: str }
 ```
 
 Failing operations return `ok == false` with a message in `error`; they do not
-trap. `fs_read_text` reads at most 64 MiB and rejects larger files.
+trap. `error` comes from the operating system and is localised, so a program must
+branch on `code`:
+
+| `code` | Meaning |
+| --- | --- |
+| 0 | success |
+| 1 | no such file or directory |
+| 2 | permission denied |
+| 3 | invalid path: empty, longer than 4096 bytes, not valid UTF-8 on Windows, or containing a NUL byte |
+| 4 | file is larger than the 64 MiB limit of `fs_read_text` |
+| 5 | other input or output failure |
+| 6 | the file is locked by another program (`fs_lock`) |
+
+A path that contains a NUL byte is rejected as a whole rather than truncated at
+the NUL: `"dir/file\0.orig"` and `"dir/file"` name the same file to the operating
+system, so accepting the first would let a program written to preserve the second
+overwrite it. Gable strings may still contain NUL bytes; only path arguments are
+restricted this way.
+
+`fs_read_text` reads at most 64 MiB and rejects larger files.
+
+`fs_write_text` truncates the file and writes the new contents in place, so a
+program that stops halfway through leaves a partial file. `fs_write_text_atomic`
+writes a temporary file in the same directory and renames it over the target:
+readers see either the old contents or the new ones, and a failed or interrupted
+write leaves the previous contents untouched. It is slower, because every write
+creates and renames a file, and it refuses to replace a file the process may not
+write. Neither function forces the data to disk, so a machine that loses power
+immediately afterwards can still lose the write.
+
+`fs_lock` and `fs_unlock` provide the advisory lock that a read-modify-write
+sequence needs, because two programs that read the same file and then write it
+back would otherwise lose one of the updates. `fs_lock` creates `<path>.lock`
+exclusively; while another program holds it, it retries for about a second and
+then reports code 6. A lock file older than ten seconds is treated as abandoned by
+a program that died without unlocking, and removed. `fs_unlock` removes the lock
+file and succeeds when there is none. The lock is advisory: a program that never
+calls `fs_lock` is not stopped from writing, and the data file itself is never
+locked. Locks are per file name, not per file: two names for the same file, such
+as a relative and an absolute path, produce two different lock files.
 
 On Windows, command-line arguments are converted from the process ANSI code page
-to UTF-8, because Gable strings are UTF-8. On POSIX hosts the bytes are passed
-through unchanged.
+to UTF-8, and file paths are converted from UTF-8 to UTF-16 for the operating
+system, so accented and non-BMP characters work. On POSIX hosts the bytes are
+passed through unchanged.
 
 ## 10. Running a program
 

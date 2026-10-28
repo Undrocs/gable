@@ -297,8 +297,9 @@ observe a mutation?") from the language. Static lengths make layout and bounds
 checking trivial and keep the C backend honest, since the generated type is a
 wrapper struct around a C array.
 
-**Consequences.** The notes tool in `tools/notes` streams over file contents
-instead of holding a growable list. A struct cannot contain itself by value.
+**Consequences.** The notes tool in `tools/notes` reads the whole notes file into
+one string and rewrites it, instead of holding a growable list of tasks. A struct
+cannot contain itself by value.
 
 **Alternatives rejected.** (a) Reference types with ownership rules: a large design
 (the v0.3 memory work). (b) A built-in growable array: needs heap management and a

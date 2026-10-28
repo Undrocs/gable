@@ -61,6 +61,82 @@ fn list_tasks(content: str) -> i32 {
     return 0;
 }
 
+/// Loads the file and checks that every line is a well-formed task. A missing
+/// file is an empty list.
+fn load_for_reading(path: str) -> LoadResult {
+    let loaded = load_notes(path);
+    if !loaded.ok {
+        return loaded;
+    }
+    if !is_valid_content(loaded.content) {
+        return LoadResult(false, "", "it contains a line that is not a task");
+    }
+    return loaded;
+}
+
+/// Performs one mutating command while the lock is held and returns the exit
+/// status. The caller releases the lock.
+fn run_mutation(path: str, command: str, argument: str) -> i32 {
+    if command == "add" && !is_valid_title(argument) {
+        eprint("notes: a task title must not be empty or contain tabs or line breaks");
+        return 1;
+    }
+    if command == "done" || command == "remove" {
+        if parse_number(argument) == 0 {
+            eprint("notes: " + command + " requires a task number from 1 to 1000000");
+            return 1;
+        }
+    }
+
+    let loaded = load_for_reading(path);
+    if !loaded.ok {
+        report_storage_error("cannot read the notes file", loaded.error);
+        return 2;
+    }
+
+    if command == "clear" {
+        let error = save_notes(path, "");
+        if error.len > 0 {
+            report_storage_error("cannot write the notes file", error);
+            return 2;
+        }
+        print("cleared");
+        return 0;
+    }
+
+    if command == "add" {
+        if loaded.content.len > 1000000 {
+            eprint("notes: the notes file is too large for this tool");
+            return 2;
+        }
+        let error = save_notes(path, append_task(loaded.content, argument));
+        if error.len > 0 {
+            report_storage_error("cannot write the notes file", error);
+            return 2;
+        }
+        print("added: " + argument);
+        return 0;
+    }
+
+    let target = parse_number(argument);
+    var rewrite: Rewrite = Rewrite("", false);
+    if command == "done" {
+        rewrite = mark_done(loaded.content, target);
+    } else {
+        rewrite = drop_task(loaded.content, target);
+    }
+    if !rewrite.found {
+        eprint("notes: no task numbered " + str_of_i64(target as i64));
+        return 3;
+    }
+    let error = save_notes(path, rewrite.content);
+    if error.len > 0 {
+        report_storage_error("cannot write the notes file", error);
+        return 2;
+    }
+    return 0;
+}
+
 fn main() -> i32 {
     var path: str = "notes.txt";
     var command: str = "";
@@ -110,74 +186,37 @@ fn main() -> i32 {
         argument = str_trim(argument);
     }
 
-    let loaded = load_notes(path);
-    if !loaded.ok {
-        report_storage_error("cannot read the notes file", loaded.error);
-        return 2;
-    }
-    if !is_valid_content(loaded.content) {
-        report_storage_error("cannot read the notes file",
-                             "it contains a line that is not a task");
-        return 2;
-    }
-
     if command == "list" {
+        // Listing only reads, and the file is replaced atomically, so a reader
+        // never sees a partial write and needs no lock.
+        let loaded = load_for_reading(path);
+        if !loaded.ok {
+            report_storage_error("cannot read the notes file", loaded.error);
+            return 2;
+        }
         return list_tasks(loaded.content);
     }
 
-    if command == "add" {
-        if !is_valid_title(argument) {
-            eprint("notes: a task title must not be empty or contain tabs or line breaks");
-            return 1;
-        }
-        if loaded.content.len > 1000000 {
-            eprint("notes: the notes file is too large for this tool");
-            return 2;
-        }
-        let error = save_notes(path, append_task(loaded.content, argument));
-        if error.len > 0 {
-            report_storage_error("cannot write the notes file", error);
-            return 2;
-        }
-        print("added: " + argument);
-        return 0;
+    if command != "add" && command != "done" && command != "remove" && command != "clear" {
+        eprint("notes: unknown command '" + command + "'");
+        print_usage();
+        return 1;
     }
 
-    if command == "done" || command == "remove" {
-        let target = parse_number(argument);
-        if target == 0 {
-            eprint("notes: " + command + " requires a task number from 1 to 1000000");
-            return 1;
-        }
-        var rewrite: Rewrite = Rewrite("", false);
-        if command == "done" {
-            rewrite = mark_done(loaded.content, target);
-        } else {
-            rewrite = drop_task(loaded.content, target);
-        }
-        if !rewrite.found {
-            eprint("notes: no task numbered " + str_of_i64(target as i64));
-            return 3;
-        }
-        let error = save_notes(path, rewrite.content);
-        if error.len > 0 {
-            report_storage_error("cannot write the notes file", error);
-            return 2;
-        }
-        return 0;
+    // Every mutating command is a read-modify-write sequence. The lock keeps two
+    // commands from reading the same file and then overwriting each other's work,
+    // and the atomic save keeps an interrupted write from damaging the file.
+    let lockError = lock_notes(path);
+    if lockError.len > 0 {
+        report_storage_error("cannot lock the notes file", lockError);
+        return 2;
     }
 
-    if command == "clear" {
-        let error = save_notes(path, "");
-        if error.len > 0 {
-            report_storage_error("cannot write the notes file", error);
-            return 2;
-        }
-        print("cleared");
-        return 0;
+    let status = run_mutation(path, command, argument);
+    let unlockError = unlock_notes(path);
+    if unlockError.len > 0 {
+        report_storage_error("cannot release the lock on the notes file", unlockError);
+        return 2;
     }
-
-    eprint("notes: unknown command '" + command + "'");
-    print_usage();
-    return 1;
+    return status;
 }
