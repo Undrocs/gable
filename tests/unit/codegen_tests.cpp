@@ -2,6 +2,7 @@
 #include "test_helpers.h"
 
 #include <string>
+#include <vector>
 
 using gabletest::emitCFor;
 using gabletest::emitCForProject;
@@ -52,11 +53,35 @@ GABLE_TEST(codegen_escapes_string_contents) {
   GABLE_CHECK(contains(c, "\\n"));  // newline
 }
 
-GABLE_TEST(codegen_wraps_signed_arithmetic_in_unsigned) {
+// Arithmetic is computed in 64-bit unsigned and reduced to the declared width:
+// C would promote narrow operands to `int`, so `(uint8_t)255 + 1` would be 256 and
+// a narrow multiplication could overflow `int`, which is undefined.
+GABLE_TEST(codegen_computes_arithmetic_at_the_declared_width) {
   const std::string c = emitCFor(
       "fn add(a: i32, b: i32) -> i32 { return a + b; }\n"
       "fn main() -> i32 { return add(1, 2); }\n");
-  GABLE_CHECK(contains(c, "(int32_t)(uint32_t)((uint32_t)(v0_a) + (uint32_t)(v1_b))"));
+  GABLE_CHECK(contains(c, "(int32_t)gable_rt_trunc_i32((uint64_t)(v0_a) + (uint64_t)(v1_b))"));
+}
+
+GABLE_TEST(codegen_reduces_unsigned_arithmetic_to_the_declared_width) {
+  const std::string c = emitCFor(
+      "fn add(a: u8, b: u8) -> u8 { return a * b; }\n"
+      "fn main() -> i32 { return 0; }\n");
+  GABLE_CHECK(contains(c, "(uint8_t)gable_rt_trunc_u8((uint64_t)(v0_a) * (uint64_t)(v1_b))"));
+}
+
+// A narrowing cast goes through the same helpers, so a converted constant cannot
+// trip MSVC's "cast truncates constant value" warning and the behaviour does not
+// depend on the C compiler's conversion rules.
+GABLE_TEST(codegen_uses_truncation_helpers_for_narrowing_casts) {
+  const std::string c = emitCFor(
+      "fn main() -> i32 {\n"
+      "  let wide: i32 = 200;\n"
+      "  let narrow: i8 = wide as i8;\n"
+      "  print(narrow);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "(int8_t)gable_rt_trunc_i8((uint64_t)(v0_wide))"));
 }
 
 GABLE_TEST(codegen_uses_runtime_helpers_for_division) {
@@ -258,4 +283,105 @@ GABLE_TEST(codegen_reports_the_compiler_version) {
   const std::string c = emitCFor(gabletest::kSimpleProgram());
   GABLE_CHECK(contains(c, "Compiler "));
   GABLE_CHECK(contains(c, "C17 backend"));
+}
+
+namespace {
+
+/// Emits C for `program` while pretending the source file is called `name`.
+std::string emitCWithSourceName(const std::string& program, const std::string& name) {
+  gabletest::Analysis analysis = gabletest::analyze(program);
+  if (!analysis.ok() || !analysis.frontend.module) {
+    return std::string();
+  }
+  return gable::emitC(*analysis.frontend.module,
+                      gable::CBackendOptions{name, gable::versionString()});
+}
+
+/// Everything after the banner comment, which is the part that must not change
+/// when only the source name differs.
+std::string bodyAfterBanner(const std::string& generatedC) {
+  const std::size_t end = generatedC.find("*/");
+  return end == std::string::npos ? generatedC : generatedC.substr(end + 2);
+}
+
+}  // namespace
+
+// The banner includes the source path, which comes from the user. A path that
+// contains a comment terminator used to end the banner early and let the rest of
+// the name be compiled as C; that made a file name able to add declarations to
+// the generated program. Every hostile name below must leave the translation
+// unit itself untouched.
+GABLE_TEST(codegen_escapes_hostile_source_names) {
+  const std::string program = gabletest::kSimpleProgram();
+  const std::string benign = emitCWithSourceName(program, "benign.gable");
+  GABLE_CHECK(!benign.empty());
+
+  const std::vector<std::string> hostile = {
+      "evil*/int injected = 1; /*.gable",
+      "evil*/int injected = 1; //.gable",
+      "line\nint injected = 1;\n",
+      "cr\rint injected = 1;\r",
+      "quote\".gable",
+      "back\\slash.gable",
+      "*/",
+      "*",
+      "\\",
+      "ütf8-ñame.gable",
+      "#include <stdlib.h>.gable",
+  };
+  for (const std::string& name : hostile) {
+    const std::string generated = emitCWithSourceName(program, name);
+    GABLE_CHECK(!generated.empty());
+
+    // The banner is one comment: its first line, the two note lines, and the
+    // terminator. Everything in it stays inside the comment.
+    GABLE_CHECK_EQ(bodyAfterBanner(benign), bodyAfterBanner(generated));
+
+    // Nothing outside a comment mentions the payload.
+    const std::string body = bodyAfterBanner(generated);
+    GABLE_CHECK(body.find("injected") == std::string::npos);
+    GABLE_CHECK(body.find("#include <stdlib.h>") == std::string::npos);
+
+    // The banner is exactly three lines long: the first `*/` closes it, so the
+    // prefix before that terminator contains two newlines and no more.
+    const std::size_t firstTerminator = generated.find("*/");
+    GABLE_CHECK(firstTerminator != std::string::npos);
+    std::size_t newlinesBeforeTerminator = 0;
+    for (std::size_t i = 0; i < firstTerminator; ++i) {
+      if (generated[i] == '\n') {
+        ++newlinesBeforeTerminator;
+      }
+    }
+    GABLE_CHECK_EQ(std::size_t(2), newlinesBeforeTerminator);
+
+    // The path is still recognisable, just escaped.
+    GABLE_CHECK(generated.find("Generated by the Gable compiler from ") != std::string::npos);
+  }
+}
+
+// Field names in Gable are identifiers, not C members: the generated member must
+// avoid C keywords, C library macros, and the compiler's own generated names.
+GABLE_TEST(codegen_mangles_field_names) {
+  const std::string c = emitCFor(
+      "struct Config { switch: i32, errno: i32, gable_fn_main: i32 }\n"
+      "fn main() -> i32 {\n"
+      "  var config: Config = Config(1, 2, 3);\n"
+      "  config.errno = 20;\n"
+      "  print(config.switch + config.errno + config.gable_fn_main);\n"
+      "  return 0;\n"
+      "}\n");
+  GABLE_CHECK(contains(c, "int32_t gable_f_switch;"));
+  GABLE_CHECK(contains(c, "int32_t gable_f_errno;"));
+  GABLE_CHECK(contains(c, "int32_t gable_f_gable_fn_main;"));
+  GABLE_CHECK(contains(c, "v0_config).gable_f_errno = 20"));
+  // No bare C keyword may appear where a member is declared or read.
+  GABLE_CHECK(!contains(c, "int32_t switch;"));
+  GABLE_CHECK(!contains(c, "int32_t errno;"));
+}
+
+// Prelude structs are defined by gable/rt.h, so their members keep the names the
+// header uses.
+GABLE_TEST(codegen_uses_prelude_field_names_as_declared) {
+  const std::string c = emitCFor(gabletest::kSimpleProgram());
+  GABLE_CHECK(contains(c, ".gable_f_") == false);
 }

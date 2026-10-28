@@ -1,0 +1,1 @@
+%DATA:path_with_null.bin%

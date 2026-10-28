@@ -7,12 +7,18 @@
 // I/O.
 //
 // Usage: notes_tool_tests <path-to-gable> <path-to-notes.gable>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include "gable/platform.h"
 #include "gable/process.h"
@@ -24,6 +30,39 @@ namespace {
 
 int failures = 0;
 int checks = 0;
+int skipped = 0;
+
+/// Records a check that cannot run here, so an unexercised case is visible in
+/// the output instead of silently passing.
+void skip(const std::string& name, const std::string& why) {
+  ++skipped;
+  std::cerr << "SKIP " << name << ": " << why << "\n";
+}
+
+bool runningAsRoot() {
+#if defined(_WIN32)
+  return false;
+#else
+  return ::geteuid() == 0;
+#endif
+}
+
+/// True when the tool left a temporary file behind next to `path`.
+bool hasTemporaryFilesFor(const fs::path& path) {
+  const std::string prefix = path.filename().string() + ".tmp-";
+  std::error_code ignored;
+  for (const auto& entry : fs::directory_iterator(path.parent_path(), ignored)) {
+    if (entry.path().filename().string().rfind(prefix, 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void writeFile(const fs::path& path, const std::string& contents) {
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  file << contents;
+}
 
 void report(const std::string& name, const std::string& message) {
   ++failures;
@@ -258,8 +297,146 @@ int main(int argc, char** argv) {
               std::to_string(result.exitCode));
   }
 
+  // A stored line with a flag other than "0" or "1", a missing tab, or an empty
+  // title is corruption: it is reported and never rewritten.
+  {
+    const std::vector<std::string> malformed = {
+        "x\tbuy milk\n", "2\tbuy milk\n", "0 buy milk\n", "1\t\n", "\tbuy milk\n"};
+    for (const std::string& corrupt : malformed) {
+      writeFile(notesFile, corrupt);
+      const Run list = tool.run({"list"});
+      checkEqual(list.exitCode, 2, "malformed_line", "exit status for a malformed line");
+      check(list.err.find("cannot read the notes file") != std::string::npos, "malformed_line",
+            "stderr does not explain the problem");
+      const Run add = tool.run({"add", "another"});
+      checkEqual(add.exitCode, 2, "malformed_line_add", "exit status");
+      checkEqual(tool.stored(), corrupt, "malformed_line_add",
+                 "a malformed line must not be overwritten");
+    }
+  }
+
+  // A missing file is an empty list for every command, and `add` creates it.
+  {
+    fs::remove(notesFile);
+    const Run list = tool.run({"list"});
+    checkEqual(list.exitCode, 0, "missing_file_list", "exit status");
+    checkEqual(list.out, "no tasks\n", "missing_file_list", "stdout");
+    check(!fs::exists(notesFile), "missing_file_list", "listing must not create the file");
+
+    const Run add = tool.run({"add", "created on demand"});
+    checkEqual(add.exitCode, 0, "missing_file_add", "exit status");
+    checkEqual(tool.stored(), "0\tcreated on demand\n", "missing_file_add", "file contents");
+  }
+
+  // Saving replaces the file instead of rewriting it in place, so no temporary
+  // file is left behind and the previous contents survive a failed save.
+  {
+    writeFile(notesFile, "0\tkept\n");
+    const Run add = tool.run({"add", "second"});
+    checkEqual(add.exitCode, 0, "atomic_save", "exit status");
+    checkEqual(tool.stored(), "0\tkept\n0\tsecond\n", "atomic_save", "file contents");
+    check(!hasTemporaryFilesFor(notesFile), "atomic_save", "a temporary file was left behind");
+
+    // A stale temporary file from a killed process must not confuse the next save.
+    const std::string stale = notesFile + ".tmp-1-1";
+    writeFile(stale, "half-written");
+    const Run again = tool.run({"add", "third"});
+    checkEqual(again.exitCode, 0, "stale_temporary_file", "exit status");
+    checkEqual(tool.stored(), "0\tkept\n0\tsecond\n0\tthird\n", "stale_temporary_file",
+               "file contents");
+    checkEqual(readFile(stale), "half-written", "stale_temporary_file",
+               "a foreign temporary file must not be modified");
+    fs::remove(stale);
+  }
+
+  // A locked file is reported as busy rather than silently racing the other
+  // process.
+  {
+    const std::string lockFile = notesFile + ".lock";
+    writeFile(lockFile, "1\n");
+    const Run blocked = tool.run({"add", "blocked"});
+    checkEqual(blocked.exitCode, 2, "busy_lock", "exit status");
+    check(blocked.err.find("another notes command") != std::string::npos, "busy_lock",
+          "stderr does not explain that the file is in use");
+
+    // A lock older than ten seconds is treated as abandoned: the process that
+    // created it died without releasing it.
+    fs::last_write_time(lockFile,
+                        fs::file_time_type::clock::now() - std::chrono::seconds(30));
+    const Run reclaimed = tool.run({"add", "after stale lock"});
+    checkEqual(reclaimed.exitCode, 0, "stale_lock", "exit status");
+    check(!fs::exists(lockFile), "stale_lock", "the lock was not released");
+    check(tool.stored().find("after stale lock") != std::string::npos, "stale_lock",
+          "the task was not stored");
+  }
+
+  // A read-only file is reported with the permission code and left untouched.
+  {
+    writeFile(notesFile, "0\tprotected\n");
+    std::error_code ignored;
+    fs::permissions(notesFile, fs::perms::owner_read, fs::perm_options::replace, ignored);
+    if (runningAsRoot()) {
+      skip("permission_denied", "tests run as root, so file permissions are not enforced");
+    } else {
+      const Run add = tool.run({"add", "not allowed"});
+      checkEqual(add.exitCode, 2, "permission_denied", "exit status");
+      check(add.err.find("code 2") != std::string::npos, "permission_denied",
+            "stderr does not report the permission code");
+      checkEqual(tool.stored(), "0\tprotected\n", "permission_denied",
+                 "the file must be unchanged");
+    }
+    fs::permissions(notesFile, fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ignored);
+  }
+
+  // Two commands that add a task at the same time must both survive: the lock
+  // makes each read-modify-write sequence exclusive.
+  {
+    writeFile(notesFile, "");
+    constexpr int kWorkers = 6;
+    std::vector<Run> results(kWorkers);
+    std::vector<std::thread> workers;
+    workers.reserve(kWorkers);
+    for (int worker = 0; worker < kWorkers; ++worker) {
+      workers.emplace_back([&tool, &results, worker]() {
+        results[static_cast<size_t>(worker)] =
+            tool.run({"add", "concurrent " + std::to_string(worker)});
+      });
+    }
+    for (std::thread& worker : workers) {
+      worker.join();
+    }
+    int failedRuns = 0;
+    std::string detail;
+    for (std::size_t index = 0; index < results.size(); ++index) {
+      const Run& result = results[index];
+      if (!result.started || result.exitCode != 0) {
+        ++failedRuns;
+        detail += "\n    run " + std::to_string(index) + " exited " +
+                  std::to_string(result.exitCode) + ": " + result.err;
+      }
+    }
+    check(failedRuns == 0, "concurrent_add",
+          "commands that failed to add a task: " + std::to_string(failedRuns) + detail);
+    const std::string stored = tool.stored();
+    int missing = 0;
+    for (int worker = 0; worker < kWorkers; ++worker) {
+      if (stored.find("concurrent " + std::to_string(worker)) == std::string::npos) {
+        ++missing;
+      }
+    }
+    checkEqual(missing, 0, "concurrent_add", "tasks lost to a concurrent update");
+    check(!hasTemporaryFilesFor(notesFile), "concurrent_add",
+          "a temporary file was left behind");
+    check(!fs::exists(notesFile + ".lock"), "concurrent_add", "the lock was not released");
+  }
+
   const int total = checks;
   std::cout << (failures == 0 ? "PASS " : "FAILED ") << (total - failures) << "/" << total
-            << " notes tool tests\n";
+            << " notes tool tests";
+  if (skipped > 0) {
+    std::cout << " (" << skipped << " skipped)";
+  }
+  std::cout << "\n";
   return failures == 0 ? 0 : 1;
 }

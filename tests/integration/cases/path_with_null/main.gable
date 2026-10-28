@@ -1,0 +1,56 @@
+// A `str` may contain NUL bytes — file contents routinely do — but a NUL cannot
+// appear in a filesystem path: the operating system would stop reading the name
+// at the NUL, so `victim.txt\0suffix` would name `victim.txt`. Every prefix of a
+// path that contains one must be rejected, and nothing may be written.
+fn main() -> i32 {
+    let fixture = arg(1);
+    let contents = fs_read_text(fixture);
+    if !contents.ok {
+        print("cannot read fixture: " + contents.error + " (" + str_of_i64(contents.code as i64) + ")");
+        return 1;
+    }
+
+    // The fixture is "victim.txt\0suffix\n"; slice 0..n for every n, which places
+    // the NUL at every position it can occupy.
+    var index: i64 = 0;
+    var rejected: i32 = 0;
+    var invalid_code: i32 = 0;
+    while index <= contents.text.len {
+        let prefix = str_slice(contents.text, 0, index as i32);
+        if !prefix.ok {
+            print("slice failed");
+            return 1;
+        }
+        let read = fs_read_text(prefix.text);
+        if read.ok {
+            print("read unexpectedly succeeded at length " + str_of_i64(index as i64));
+            return 1;
+        }
+        if read.error == "file path contains a NUL byte" {
+            rejected = rejected + 1;
+        }
+        if read.code == 3 {
+            invalid_code = invalid_code + 1;
+        }
+        index = index + 1;
+    }
+    print(rejected);
+    print(invalid_code);
+    print(contents.text.len);
+
+    // Writing through such a path must fail the same way, and must not create or
+    // modify any file.
+    let full = str_slice(contents.text, 0, contents.text.len as i32);
+    if full.ok {
+        let written = fs_write_text(full.text, "attack");
+        print(written.ok);
+        print(written.error);
+        print(written.code);
+    }
+
+    // An empty path is rejected as well, and a normal round trip still works.
+    let empty = fs_write_text("", "x");
+    print(empty.ok);
+    print(empty.code);
+    return 0;
+}

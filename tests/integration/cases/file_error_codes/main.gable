@@ -1,0 +1,35 @@
+fn main() -> i32 {
+    // The argument is a path in the case's scratch directory, not a directory.
+    let path: str = arg(1) + ".codes";
+
+    // A failure is reported through the result, with a stable code that does not
+    // depend on the language the C library reports errors in.
+    let missing = fs_read_text(path + ".missing");
+    print(missing.ok);
+    print(missing.code);
+
+    let nowhere = fs_write_text(arg(1) + ".no-such-directory/codes.txt", "x");
+    print(nowhere.ok);
+    print(nowhere.code);
+
+    let empty = fs_read_text("");
+    print(empty.code);
+
+    // An atomic write replaces the file in one step.
+    let saved = fs_write_text_atomic(path, "one\n");
+    print(saved.ok);
+    print(fs_read_text(path).text);
+
+    // The lock is exclusive within a process too, and unlocks cleanly.
+    let locked = fs_lock(path);
+    print(locked.ok);
+    let busy = fs_lock(path);
+    print(busy.ok);
+    print(busy.code);
+    print(fs_unlock(path).ok);
+
+    let replaced = fs_write_text_atomic(path, "two\n");
+    print(replaced.ok);
+    print(fs_read_text(path).text);
+    return 0;
+}

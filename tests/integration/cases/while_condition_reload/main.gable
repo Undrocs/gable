@@ -1,0 +1,63 @@
+// The condition of a `while` loop is evaluated before every iteration, so any
+// work inside it happens again each time: integer division, a function call, a
+// bounds-checked index, and a short-circuit chain. Each loop below also has an
+// escape hatch, so an implementation that evaluated the condition once would
+// print a different number instead of hanging.
+fn at_least(value: i32, bound: i32) -> bool {
+    return value >= bound;
+}
+
+fn main() -> i32 {
+    var n: i64 = 0;
+    while n / 1 < 3 {
+        n = n + 1;
+        if n > 5 {
+            break;
+        }
+    }
+    print(n);
+
+    var reached: i32 = 0;
+    while at_least(reached, 4) == false {
+        reached = reached + 1;
+        if reached > 8 {
+            break;
+        }
+    }
+    print(reached);
+
+    var values: [i32; 4] = [4, 8, 12, 16];
+    var index: i32 = 0;
+    while values[index] / 4 < 2 {
+        index = index + 1;
+        if index > 10 {
+            break;
+        }
+    }
+    print(index);
+
+    var k: i32 = 0;
+    while k < 3 && at_least(k, 0) {
+        k = k + 1;
+        if k > 10 {
+            break;
+        }
+    }
+    print(k);
+
+    var counter: i32 = 0;
+    var skipped: i32 = 0;
+    while counter / 2 < 3 {
+        counter = counter + 1;
+        if counter / 2 == 1 {
+            skipped = skipped + 1;
+            continue;
+        }
+        if counter > 20 {
+            break;
+        }
+    }
+    print(counter);
+    print(skipped);
+    return 0;
+}

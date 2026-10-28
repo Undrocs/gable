@@ -1,15 +1,24 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "gable/cli.h"
+#include "gable/output.h"
 #include "gable/platform.h"
 #include "gable/temporary.h"
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -352,4 +361,324 @@ GABLE_TEST(cli_run_forwards_the_program_exit_status) {
       writeSource(directory, "status.gable", "fn main() -> i32 { return 7; }\n");
   const Run run = runCli({"run", source});
   GABLE_CHECK_EQ(7, run.exitCode);
+}
+
+// A source path is user input. A directory whose name ends with `*` makes the
+// path contain `*/`, which used to close the banner comment of the generated
+// translation unit and turn the rest of the path into C.
+GABLE_TEST(cli_builds_a_program_whose_path_contains_a_comment_terminator) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  std::error_code ignored;
+  const std::string hostile = directory.file("evil*");
+  std::filesystem::create_directory(hostile, ignored);
+  if (!std::filesystem::is_directory(hostile)) {
+    return;  // the filesystem refuses the name; nothing to test here
+  }
+  const std::string source = writeSource(directory, "evil*/program.gable",
+                                         gabletest::kSimpleProgram());
+  const std::string output = directory.file("built");
+
+  const Run build = runCli({"build", source, "-o", output});
+  GABLE_CHECK_EQ(0, build.exitCode);
+  GABLE_CHECK_EQ(std::string(""), build.err);
+  GABLE_CHECK(std::ifstream(executablePath(output)).good());
+
+  // The path appears in the banner, escaped, and the unit still compiles.
+  const Run emitted = runCli({"build", source, "--emit-c"});
+  GABLE_CHECK_EQ(0, emitted.exitCode);
+  GABLE_CHECK(emitted.out.find("evil\\x2A/program.gable") != std::string::npos);
+  // The banner stays three lines: the first terminator in the whole file is the
+  // one that closes it, so nothing from the path escaped into the code.
+  const std::size_t terminator = emitted.out.find("*/");
+  GABLE_CHECK(terminator != std::string::npos);
+  GABLE_CHECK_EQ(std::size_t(2), static_cast<std::size_t>(std::count(
+                                     emitted.out.begin(), emitted.out.begin() +
+                                                              static_cast<std::ptrdiff_t>(terminator),
+                                     '\n')));
+}
+
+namespace {
+
+/// Creates `count` symbolic links in `directory` whose names follow the pattern
+/// an earlier implementation used for its output temporary file, each pointing at
+/// `victim`. Returns false when the file system refuses symlinks.
+bool plantTemporaryNameSymlinks(const gable::TemporaryDirectory& directory,
+                                const std::string& targetName, const std::string& victim,
+                                int count) {
+  for (int index = 1; index <= count; ++index) {
+    const std::string link =
+        directory.file("." + targetName + ".gable-tmp-" +
+                       std::to_string(gable::platform::processId()) + "-" + std::to_string(index));
+    std::error_code error;
+    std::filesystem::create_symlink(victim, link, error);
+    if (index == 1 && error) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string readWholeFile(const std::string& path) {
+  std::ifstream file(path, std::ios::binary);
+  std::stringstream contents;
+  contents << file.rdbuf();
+  return contents.str();
+}
+
+}  // namespace
+
+// The temporary file the compiler writes before it replaces the destination must
+// not be a predictable name in a shared directory: another user could create that
+// name first as a symbolic link to a file they cannot otherwise write, and the
+// compiler would then write through it. The compiler now creates a private
+// staging directory, so none of the planted links are used, and the victim keeps
+// its contents.
+GABLE_TEST(cli_does_not_follow_temporary_name_symlinks) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "program.gable", gabletest::kSimpleProgram());
+  const std::string output = directory.file("built");
+
+  const std::string victim = directory.file("victim.txt");
+  {
+    std::ofstream file(victim, std::ios::binary | std::ios::trunc);
+    file << "precious\n";
+  }
+  if (!plantTemporaryNameSymlinks(directory, "built", victim, 500)) {
+    return;  // no symlink support; the behaviour is covered on hosts that have it
+  }
+  if (!plantTemporaryNameSymlinks(directory, "module.c", victim, 500)) {
+    return;
+  }
+
+  for (int build = 0; build < 3; ++build) {
+    GABLE_CHECK_EQ(0, runCli({"build", source, "-o", output}).exitCode);
+  }
+  // `--emit-c=<path>` writes the translation unit through the compiler's own
+  // file writer, which is the path that followed a symbolic link.
+  const std::string emitted = directory.file("module.c");
+  GABLE_CHECK_EQ(0, runCli({"build", source, "--emit-c=" + emitted}).exitCode);
+
+  GABLE_CHECK_EQ(std::string("precious\n"), readWholeFile(victim));
+  GABLE_CHECK(std::ifstream(executablePath(output)).good());
+  GABLE_CHECK(readWholeFile(emitted).find("gable_fn_main") != std::string::npos);
+}
+
+// A regular file that already occupies a plausible temporary name is neither
+// truncated nor used: only the destination is written.
+GABLE_TEST(cli_leaves_foreign_files_alone) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "program.gable", gabletest::kSimpleProgram());
+  const std::string output = directory.file("built");
+
+  std::vector<std::string> foreign;
+  for (int index = 1; index <= 20; ++index) {
+    const std::string path =
+        directory.file("." + std::string("built") + ".gable-tmp-" +
+                       std::to_string(gable::platform::processId()) + "-" + std::to_string(index));
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << "keep-" << index << "\n";
+    foreign.push_back(path);
+  }
+
+  GABLE_CHECK_EQ(0, runCli({"build", source, "-o", output}).exitCode);
+  for (std::size_t index = 0; index < foreign.size(); ++index) {
+    GABLE_CHECK_EQ("keep-" + std::to_string(index + 1) + "\n", readWholeFile(foreign[index]));
+  }
+}
+
+// Whatever path the build takes, the staging directory does not survive it.
+GABLE_TEST(cli_removes_its_staging_directory) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string good = writeSource(directory, "good.gable", gabletest::kSimpleProgram());
+  const std::string bad = writeSource(directory, "bad.gable", "fn main() -> i32 { return x; }\n");
+
+  GABLE_CHECK_EQ(0, runCli({"build", good, "-o", directory.file("ok")}).exitCode);
+  GABLE_CHECK_EQ(1, runCli({"build", bad, "-o", directory.file("failed")}).exitCode);
+  GABLE_CHECK_EQ(0, runCli({"build", good, "--emit-c=" + directory.file("emitted.c")}).exitCode);
+
+  std::size_t stagingDirectories = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(directory.path())) {
+    if (entry.path().filename().string().rfind(".gable-", 0) == 0) {
+      ++stagingDirectories;
+    }
+  }
+  GABLE_CHECK_EQ(std::size_t(0), stagingDirectories);
+}
+
+// Two compilations of the same destination must not see each other's temporary
+// file, whichever of them finishes last. The final file is complete: it matches
+// one of the two programs byte for byte.
+GABLE_TEST(cli_concurrent_writes_to_the_same_output_stay_whole) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string output = directory.file("shared.txt");
+
+  std::vector<std::string> payloads;
+  payloads.push_back(std::string(64 * 1024, 'a'));
+  payloads.push_back(std::string(64 * 1024, 'b'));
+
+  std::vector<std::thread> writers;
+  std::atomic<int> failures{0};
+  for (const std::string& payload : payloads) {
+    writers.emplace_back([&, payload]() {
+      for (int attempt = 0; attempt < 20; ++attempt) {
+        std::string error;
+        auto file = gable::AtomicOutputFile::create(output, error);
+        if (!file) {
+          ++failures;
+          return;
+        }
+        if (!file->write(payload, error) || !file->commit(error)) {
+          ++failures;
+          return;
+        }
+      }
+    });
+  }
+  for (std::thread& writer : writers) {
+    writer.join();
+  }
+
+  GABLE_CHECK_EQ(0, failures.load());
+  const std::string contents = readWholeFile(output);
+  const bool first = contents == payloads[0];
+  const bool second = contents == payloads[1];
+  GABLE_CHECK(first || second);
+
+  std::size_t stagingDirectories = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(directory.path())) {
+    if (entry.path().filename().string().rfind(".gable-", 0) == 0) {
+      ++stagingDirectories;
+    }
+  }
+  GABLE_CHECK_EQ(std::size_t(0), stagingDirectories);
+}
+
+namespace {
+
+/// Sets an environment variable for the duration of a scope and restores the
+/// previous value afterwards, so one test cannot change another's environment.
+class ScopedEnvironmentVariable {
+ public:
+  ScopedEnvironmentVariable(const char* name, const char* value) : name_(name) {
+    const char* previous = std::getenv(name);
+    if (previous != nullptr) {
+      hadValue_ = true;
+      previous_ = previous;
+    }
+#if defined(_WIN32)
+    _putenv_s(name_.c_str(), value);
+#else
+    ::setenv(name_.c_str(), value, 1);
+#endif
+  }
+
+  ~ScopedEnvironmentVariable() {
+#if defined(_WIN32)
+    _putenv_s(name_.c_str(), hadValue_ ? previous_.c_str() : "");
+#else
+    if (hadValue_) {
+      ::setenv(name_.c_str(), previous_.c_str(), 1);
+    } else {
+      ::unsetenv(name_.c_str());
+    }
+#endif
+  }
+
+  ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+  ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
+
+ private:
+  std::string name_;
+  std::string previous_;
+  bool hadValue_ = false;
+};
+
+}  // namespace
+
+// Extra options in GABLE_CC_FLAGS reach the C compiler the backend runs, which is
+// what makes it possible to build generated programs with a sanitizer. A flag the
+// compiler rejects must be reported as a backend failure rather than hidden.
+GABLE_TEST(cli_extra_c_compiler_flags_reach_the_backend) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "flags.gable", gabletest::kSimpleProgram());
+  const std::string output = directory.file("flags-program");
+#if defined(_WIN32)
+  const char* rejectedFlag = "/FIgable-flag-test-missing-header.h";
+#else
+  const char* rejectedFlag = "-include gable-flag-test-missing-header.h";
+#endif
+  {
+    const ScopedEnvironmentVariable flags("GABLE_CC_FLAGS", rejectedFlag);
+    const Run failed = runCli({"build", source, "-o", output});
+    // A failing C compiler is an internal failure (exit status 70), not a
+    // diagnostic about the source file.
+    GABLE_CHECK_EQ(70, failed.exitCode);
+    GABLE_CHECK(failed.err.find("the C compiler failed") != std::string::npos);
+  }
+  const Run succeeded = runCli({"build", source, "-o", output});
+  GABLE_CHECK_EQ(0, succeeded.exitCode);
+}
+
+#if !defined(_WIN32)
+// The C compiler prints progress chatter (cl.exe prints the name of each source
+// file) on standard output. That is not a diagnostic, so a successful build must
+// not forward it: `gable build` writing to standard error on success is a bug that
+// only showed up on Windows, where the chatter comes from cl.exe.
+GABLE_TEST(cli_does_not_forward_c_compiler_stdout_on_success) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string source = writeSource(directory, "quiet.gable", gabletest::kSimpleProgram());
+  const std::string output = directory.file("quiet-program");
+  const std::string wrapper = directory.file("chatty-cc.sh");
+  {
+    std::ofstream script(wrapper, std::ios::binary | std::ios::trunc);
+    script << "#!/bin/sh\n"
+              "printf 'chatty compiler banner\\n'\n"
+              "exec \"$GABLE_TEST_REAL_CC\" \"$@\"\n";
+  }
+  std::error_code ignored;
+  std::filesystem::permissions(wrapper,
+                               std::filesystem::perms::owner_exec |
+                                   std::filesystem::perms::owner_read |
+                                   std::filesystem::perms::owner_write,
+                               std::filesystem::perm_options::add, ignored);
+
+  const ScopedEnvironmentVariable compiler("GABLE_CC", wrapper.c_str());
+  const ScopedEnvironmentVariable realCompiler("GABLE_TEST_REAL_CC", "cc");
+  const Run run = runCli({"build", source, "-o", output});
+  GABLE_CHECK_EQ(0, run.exitCode);
+  GABLE_CHECK_EQ(std::string(""), run.err);
+  GABLE_CHECK(std::filesystem::exists(output + gable::platform::executableSuffix()));
+
+  // A verbose run does forward it, so the user can see what was run and what it
+  // printed.
+  const Run verbose = runCli({"build", source, "-o", output, "-v"});
+  GABLE_CHECK_EQ(0, verbose.exitCode);
+  GABLE_CHECK(verbose.err.find("chatty compiler banner") != std::string::npos);
+}
+#endif
+
+// A name collision has to be distinguishable from any other failure without
+// reading the message: the message comes from the operating system and is
+// localised, and the staging-directory retry must not depend on its wording.
+GABLE_TEST(output_reports_a_directory_collision_by_value) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string path = directory.file("staging");
+  std::string error;
+
+  GABLE_CHECK(gable::platform::createDirectoryExclusive(path, error) ==
+              gable::platform::CreateDirectoryResult::Created);
+  GABLE_CHECK(error.empty());
+
+  error.clear();
+  GABLE_CHECK(gable::platform::createDirectoryExclusive(path, error) ==
+              gable::platform::CreateDirectoryResult::AlreadyExists);
+  GABLE_CHECK(!error.empty());
+
+  // A path whose parent does not exist cannot be created, and that is not a
+  // collision, so the caller must stop retrying instead of spinning.
+  error.clear();
+  const std::string missingParent = directory.file("no-such-directory/staging");
+  GABLE_CHECK(gable::platform::createDirectoryExclusive(missingParent, error) ==
+              gable::platform::CreateDirectoryResult::Failed);
+  GABLE_CHECK(!error.empty());
 }

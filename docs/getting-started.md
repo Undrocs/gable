@@ -39,12 +39,15 @@ Other presets: `release`, `asan` (AddressSanitizer and UndefinedBehaviorSanitize
 ctest --test-dir build/debug --output-on-failure
 ```
 
-Three CTest entries exist:
+Four CTest entries exist:
 
-* `unit` — 197 fast unit tests (lexer, parser, semantics including multi-file
+* `unit` — 215 fast unit tests (lexer, parser, semantics including multi-file
   programs, code generation, CLI, robustness).
 * `notes_tool` — builds `tools/notes` and drives it through its command line; this
   is the end-to-end test for a real multi-file program.
+* `runtime_files` — calls the runtime's file builtins from C, which is the only
+  way to reach a NUL byte in a path or a file above the read limit. POSIX only;
+  it is not registered on Windows.
 * `integration` — compiles and runs every case under `tests/integration/cases`
   and every program under `examples/`, comparing stdout, exit status, and
   diagnostics. Some cases pass program arguments. It requires a working C
@@ -131,6 +134,7 @@ out-of-bounds array index) exits with status 70 and writes
 | Variable | Purpose |
 | --- | --- |
 | `GABLE_CC` | C compiler used by the backend (default `cc`, or `cl` on Windows) |
+| `GABLE_CC_FLAGS` | extra options for that compiler, split on whitespace; use it to build generated programs with a sanitizer |
 | `GABLE_RUNTIME_INCLUDE` | directory containing `gable/rt.h` |
 | `GABLE_RUNTIME_LIB` | path to `libgable_rt.a` |
 | `TMPDIR` | parent directory for temporary build directories on POSIX hosts (Windows uses `%TEMP%`) |
@@ -168,7 +172,10 @@ contains complete programs:
 | `tasks.gable` | arrays, `for` loops, conversions |
 
 `tools/notes` is a larger program split across three files; it accepts arguments,
-keeps tasks in a text file, and has its own test suite:
+keeps tasks in a text file, and has its own test suite. It saves through a
+temporary file that replaces the notes file in one step, and takes `<file>.lock`
+while it rewrites, so an interrupted save keeps the previous contents and two
+commands do not lose each other's changes:
 
 ```bash
 gable run tools/notes/notes.gable -- add "write the release notes"

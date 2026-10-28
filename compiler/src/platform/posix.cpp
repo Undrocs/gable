@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -78,6 +80,53 @@ std::string createTemporaryDirectory(std::string& error) {
 std::string defaultCCompiler() { return "cc"; }
 
 std::string executableSuffix() { return {}; }
+
+CreateDirectoryResult createDirectoryExclusive(const std::string& path, std::string& error) {
+  // 0700: only this user can create entries in the directory, so nothing else
+  // can race the compiler by planting a file or a symbolic link inside it.
+  if (::mkdir(path.c_str(), S_IRWXU) == 0) {
+    return CreateDirectoryResult::Created;
+  }
+  const int errorNumber = errno;
+  error = std::strerror(errorNumber);
+  if (errorNumber == EEXIST) {
+    return CreateDirectoryResult::AlreadyExists;
+  }
+  return CreateDirectoryResult::Failed;
+}
+
+bool writeNewFile(const std::string& path, const std::string& contents, std::string& error) {
+  // O_EXCL is the part that matters: it fails when anything already exists at
+  // the path, including a symbolic link, instead of following it.
+  const int descriptor =
+      ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR);
+  if (descriptor < 0) {
+    error = std::strerror(errno);
+    return false;
+  }
+
+  std::size_t written = 0;
+  while (written < contents.size()) {
+    const ssize_t count = ::write(descriptor, contents.data() + written, contents.size() - written);
+    if (count < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      error = std::strerror(errno);
+      ::close(descriptor);
+      ::unlink(path.c_str());
+      return false;
+    }
+    written += static_cast<std::size_t>(count);
+  }
+
+  if (::close(descriptor) != 0) {
+    error = std::strerror(errno);
+    ::unlink(path.c_str());
+    return false;
+  }
+  return true;
+}
 
 bool replaceFile(const std::string& source, const std::string& destination, std::string& error) {
   std::error_code code;

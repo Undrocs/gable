@@ -201,9 +201,10 @@ compile-time paths never produce confusing linker errors.
 ## Runtime
 
 The runtime is C17 with a C ABI: output formatting, string operations, argument
-conversion, whole-file I/O, integer division, and traps. It contains no language
-semantics that the type checker should know about, and is linked statically into
-every executable.
+conversion, whole-file I/O, file locking, integer division, and traps. It contains
+no language semantics that the type checker should know about, and is linked
+statically into every executable. File failures are returned as values with a
+stable code, never as localised text.
 
 Strings created at run time are allocated with `malloc` and never freed. That is a
 documented v0.2 property, not an oversight; see
@@ -221,6 +222,8 @@ documented v0.2 property, not an oversight; see
   under `examples/` must compile, run, and exit with status 0.
 * `tools/notes/tests` — the acceptance test: builds a real multi-file program and
   drives it through its command line and its file.
+* `runtime/tests` — calls the runtime's file builtins from C, where a NUL byte in a
+  path and a file above the read limit can actually be constructed. POSIX only.
 * `build/asan` (CMake preset `asan`) runs the same suites under AddressSanitizer
   and UndefinedBehaviorSanitizer.
 

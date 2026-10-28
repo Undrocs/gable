@@ -67,10 +67,24 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
+      # The test output is reported as an annotation as well, so that a failure
+      # is readable on the pull request instead of only in the raw log.
       - name: Test
         env:
           ASAN_OPTIONS: detect_leaks=1
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          set +e
+          output=$(ctest --test-dir build --output-on-failure 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if [ $status -ne 0 ]; then
+            tail=$(printf '%s\n' "$output" | tail -c 6000)
+            tail=${tail//'%'/'%25'}
+            tail=${tail//$'\r'/'%0D'}
+            tail=${tail//$'\n'/'%0A'}
+            echo "::error title=ctest failed::$tail"
+            exit 1
+          fi
 
       - name: Smoke test the CLI
         run: |

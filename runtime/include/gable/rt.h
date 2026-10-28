@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #if defined(_MSC_VER)
 #define GABLE_NORETURN __declspec(noreturn)
@@ -45,11 +46,13 @@ typedef struct {
   bool ok;
   gable_str text;
   gable_str error;
+  int32_t code;
 } gable_rt_FileReadResult;
 
 typedef struct {
   bool ok;
   gable_str error;
+  int32_t code;
 } gable_rt_FileWriteResult;
 
 typedef struct {
@@ -67,6 +70,16 @@ typedef struct {
   gable_str text;
 } gable_rt_SliceResult;
 
+/* Stable reason codes for the file results. Programs branch on these; the
+ * `error` text comes from the C library and is localised. */
+#define GABLE_RT_FILE_OK 0
+#define GABLE_RT_FILE_NOT_FOUND 1
+#define GABLE_RT_FILE_PERMISSION 2
+#define GABLE_RT_FILE_INVALID_PATH 3
+#define GABLE_RT_FILE_TOO_LARGE 4
+#define GABLE_RT_FILE_IO 5
+#define GABLE_RT_FILE_BUSY 6
+
 /* Building strings from a literal that the compiler stores in the binary. */
 gable_str gable_rt_str(const char *data, int64_t len);
 
@@ -79,6 +92,59 @@ void gable_rt_eprint_str(gable_str value);
 void gable_rt_eprint_bool(bool value);
 void gable_rt_eprint_i64(int64_t value);
 void gable_rt_eprint_u64(uint64_t value);
+
+/* Narrowing integer conversions, used by generated code.
+ *
+ * Gable arithmetic is defined at the width of its operands: a result keeps the
+ * low bits that its type can hold. C instead promotes narrow operands to `int`,
+ * so `(uint8_t)255 + 1` is 256 and `(uint16_t)x * y` can overflow `int` (which
+ * is undefined behaviour). Generated code therefore computes in `uint64_t` and
+ * reduces through one of these helpers, which makes the result independent of
+ * the int width of the host and of the C compiler's conversion rules.
+ *
+ * The signed helpers reinterpret the low bits through `memcpy` rather than a
+ * cast, because converting an out-of-range unsigned value to a signed type is
+ * implementation-defined. */
+static inline uint8_t gable_rt_trunc_u8(uint64_t bits) {
+  return (uint8_t)(bits & UINT64_C(0xFF));
+}
+
+static inline uint16_t gable_rt_trunc_u16(uint64_t bits) {
+  return (uint16_t)(bits & UINT64_C(0xFFFF));
+}
+
+static inline uint32_t gable_rt_trunc_u32(uint64_t bits) {
+  return (uint32_t)(bits & UINT64_C(0xFFFFFFFF));
+}
+
+static inline uint64_t gable_rt_trunc_u64(uint64_t bits) { return bits; }
+
+static inline int8_t gable_rt_trunc_i8(uint64_t bits) {
+  const uint8_t raw = (uint8_t)(bits & UINT64_C(0xFF));
+  int8_t result;
+  memcpy(&result, &raw, sizeof result);
+  return result;
+}
+
+static inline int16_t gable_rt_trunc_i16(uint64_t bits) {
+  const uint16_t raw = (uint16_t)(bits & UINT64_C(0xFFFF));
+  int16_t result;
+  memcpy(&result, &raw, sizeof result);
+  return result;
+}
+
+static inline int32_t gable_rt_trunc_i32(uint64_t bits) {
+  const uint32_t raw = (uint32_t)(bits & UINT64_C(0xFFFFFFFF));
+  int32_t result;
+  memcpy(&result, &raw, sizeof result);
+  return result;
+}
+
+static inline int64_t gable_rt_trunc_i64(uint64_t bits) {
+  int64_t result;
+  memcpy(&result, &bits, sizeof result);
+  return result;
+}
 
 /* Integer division and remainder.
  *
@@ -120,6 +186,18 @@ gable_str gable_rt_arg(int32_t index);
  * returned struct rather than by trapping. */
 gable_rt_FileReadResult gable_rt_fs_read_text(gable_str path);
 gable_rt_FileWriteResult gable_rt_fs_write_text(gable_str path, gable_str text);
+
+/* Writes the whole file through a temporary file in the same directory and
+ * renames it into place, so an interrupted or failing write leaves the previous
+ * contents untouched. */
+gable_rt_FileWriteResult gable_rt_fs_write_text_atomic(gable_str path, gable_str text);
+
+/* Advisory lock for read-modify-write sequences: creates `<path>.lock`
+ * exclusively, retrying for about two seconds, and treats a lock older than ten
+ * seconds as abandoned. `fs_unlock` removes it. Neither function touches the data
+ * file itself. */
+gable_rt_FileWriteResult gable_rt_fs_lock(gable_str path);
+gable_rt_FileWriteResult gable_rt_fs_unlock(gable_str path);
 
 /* Terminates the program after writing a runtime diagnostic to standard
  * error. Never returns. */
