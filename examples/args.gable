@@ -1,13 +1,12 @@
-// Command-line arguments: arg_count() includes the program name at index 0.
+// Command-line arguments: index 0 is the program name, so user arguments start
+// at 1. Anything after `--` on the command line arrives here.
 fn main() {
-    print(arg_count());
     if arg_count() < 2 {
-        print("no names given; run with: gable run args.gable -- Ada Grace");
+        print("no arguments; run with: gable run examples/args.gable -- Ada Grace")
+        return
     }
-
-    var index: int = 1;
-    while index < arg_count() {
-        print("hello, " + arg(index));
-        index = index + 1;
+    print("hello to ${arg_count() - 1} people")
+    for index in 1..arg_count() {
+        print("  ${arg(index)}")
     }
 }

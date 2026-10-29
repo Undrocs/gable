@@ -1,37 +1,32 @@
 // Structs are values: they are copied when assigned, passed, and returned.
 struct Point {
-    x: i32,
-    y: i32,
+    x: int
+    y: int
 }
 
 struct Rectangle {
-    origin: Point,
-    width: i32,
-    height: i32,
+    origin: Point
+    width: int
+    height: int
 }
 
-fn area(rectangle: Rectangle) -> i32 {
-    return rectangle.width * rectangle.height;
+fn area(rectangle: Rectangle) -> int {
+    return rectangle.width * rectangle.height
 }
 
-fn moved(point: Point, dx: i32, dy: i32) -> Point {
+fn moved(point: Point, dx: int, dy: int) -> Point {
     // The parameter is immutable, so a modified copy is returned instead.
-    var result: Point = point;
-    result.x = result.x + dx;
-    result.y = result.y + dy;
-    return result;
+    var result = point
+    result.x = result.x + dx
+    result.y = result.y + dy
+    return result
 }
 
 fn main() {
-    let rectangle: Rectangle = Rectangle(Point(1, 2), 3, 4);
-    print(rectangle.origin.x);
-    print(area(rectangle));
+    let rectangle = Rectangle(Point(1, 2), 3, 4)
+    print("area ${area(rectangle)} at (${rectangle.origin.x}, ${rectangle.origin.y})")
 
-    let corner: Point = moved(rectangle.origin, 10, 20);
-    print(corner.x);
-    print(corner.y);
-
-    var counter: Point = Point(0, 0);
-    counter.x = counter.x + 1;
-    print(counter.x);
+    let corner = moved(rectangle.origin, 10, 20)
+    print("moved to (${corner.x}, ${corner.y})")
+    print("the original is unchanged: (${rectangle.origin.x}, ${rectangle.origin.y})")
 }

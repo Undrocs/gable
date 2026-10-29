@@ -514,8 +514,19 @@ GABLE_TEST(sema_accepts_fixed_size_arrays) {
   GABLE_CHECK(analysis.ok());
 }
 
-GABLE_TEST(sema_rejects_array_literal_without_type) {
-  const auto analysis = analyze(inMain("  let values = [1, 2, 3];\n  return 0;"));
+GABLE_TEST(sema_infers_the_type_of_a_fixed_array_literal) {
+  // The elements agree, so no annotation is needed: the literal is a fixed
+  // array of three ints and can be indexed like any other array.
+  const auto analysis = analyze(
+      inMain("  let values = [1, 2, 3];\n"
+             "  print(values[1]);\n"
+             "  print(values.len);\n"
+             "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_an_array_literal_whose_elements_disagree) {
+  const auto analysis = analyze(inMain("  let values = [1, true];\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(mentions(analysis, "cannot infer the type of an array literal"));
 }
@@ -920,7 +931,7 @@ GABLE_TEST(sema_requires_an_expected_type_for_a_list_literal) {
   const auto analysis = analyze(inMain("  let values = [];\n  return 0;"));
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(mentions(analysis, "cannot infer the type of an array literal"));
-  GABLE_CHECK(mentions(analysis, "[i32]"));
+  GABLE_CHECK(mentions(analysis, "[int]"));
 }
 
 GABLE_TEST(sema_rejects_wrong_element_in_a_list_literal) {

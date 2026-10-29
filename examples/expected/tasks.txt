@@ -1,0 +1,4 @@
+1. [x] write the specification
+2. [x] add arrays
+3. [ ] write the notes tool
+2 of 3 done

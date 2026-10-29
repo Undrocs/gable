@@ -1,44 +1,40 @@
-// Growable lists: append, read, write, iterate, and keep a list of structs.
-
+// Growable lists: append, read, replace, iterate, and keep a list of structs.
 struct Score {
-    name: str,
-    points: i64,
+    name: str
+    points: int
 }
 
-fn add(scores: [Score], name: str, points: i64) -> void {
+fn add(scores: [Score], name: str, points: int) {
     scores.push(Score(name, points))
 }
 
-fn total(scores: [Score]) -> i64 {
-    var sum: i64 = 0;
+fn total(scores: [Score]) -> int {
+    var sum = 0
     for score in scores {
-        sum = sum + score.points;
+        sum = sum + score.points
     }
-    return sum;
+    return sum
 }
 
 fn main() {
-    var scores: [Score] = [];
-    add(scores, "ada", 12);
-    add(scores, "grace", 15);
-    add(scores, "alan", 9);
+    let scores: [Score] = []
+    add(scores, "ada", 12)
+    add(scores, "grace", 15)
+    add(scores, "alan", 9)
 
     for score in scores {
-        print(score.name);
-        print(score.points);
+        print("${score.name}: ${score.points}")
     }
-    print(scores.len);
-    print(total(scores));
+    print("${scores.len} scores, ${total(scores)} points")
 
     // A list grows as needed; nothing has to be sized up front.
-    var squares: [i64] = [];
+    let squares: [int] = []
     for i in 0..10 {
         squares.push(i * i)
     }
-    print(squares.len);
-    print(squares[9]);
+    print("${squares.len} squares, last is ${squares[9]}")
 
     // Elements can be replaced by index.
-    squares[0] = 100;
-    print(squares[0]);
+    squares[0] = 100
+    print("first is now ${squares[0]}")
 }

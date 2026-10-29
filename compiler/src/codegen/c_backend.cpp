@@ -81,6 +81,11 @@ class CEmitter {
       for (const ir::LocalVariable& local : function->locals) {
         ensureType(local.type);
       }
+      // Literals can introduce a type that no declaration mentions, such as the
+      // fixed array behind `["1 + 2", "3"]`, so walk the body as well.
+      for (const auto& statement : function->body) {
+        ensureStmtTypes(*statement);
+      }
     }
     line("");
     emitPrototypes();
@@ -203,6 +208,38 @@ class CEmitter {
       return sanitize(field);
     }
     return "gable_f_" + sanitize(field);
+  }
+
+  void ensureExprTypes(const ir::Expr& expr) {
+    ensureType(expr.type);
+    if (expr.lhs) {
+      ensureExprTypes(*expr.lhs);
+    }
+    if (expr.rhs) {
+      ensureExprTypes(*expr.rhs);
+    }
+    for (const auto& argument : expr.arguments) {
+      ensureExprTypes(*argument);
+    }
+  }
+
+  void ensureStmtTypes(const ir::Stmt& statement) {
+    ensureType(statement.type);
+    if (statement.value) {
+      ensureExprTypes(*statement.value);
+    }
+    if (statement.target) {
+      ensureExprTypes(*statement.target);
+    }
+    if (statement.limit) {
+      ensureExprTypes(*statement.limit);
+    }
+    for (const auto& nested : statement.body) {
+      ensureStmtTypes(*nested);
+    }
+    for (const auto& nested : statement.elseBody) {
+      ensureStmtTypes(*nested);
+    }
   }
 
   /// Declares the C representation of `type`, after everything it depends on.

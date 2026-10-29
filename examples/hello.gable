@@ -1,4 +1,4 @@
 // The smallest useful Gable program.
 fn main() {
-    print("Hello from Gable!");
+    print("Hello from Gable!")
 }

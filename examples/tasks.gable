@@ -1,17 +1,17 @@
-// Arrays, loops, and conversions.
+// A small task list: a struct, a fixed array, and a loop.
 struct Task {
-    title: str,
-    done: bool,
+    title: str
+    done: bool
 }
 
-fn count_done(tasks: [Task; 3]) -> i32 {
-    var done: i32 = 0;
+fn count_done(tasks: [Task; 3]) -> int {
+    var done = 0
     for task in tasks {
         if task.done {
-            done = done + 1;
+            done = done + 1
         }
     }
-    return done;
+    return done
 }
 
 fn main() {
@@ -19,18 +19,17 @@ fn main() {
         Task("write the specification", true),
         Task("add arrays", true),
         Task("write the notes tool", false),
-    ];
+    ]
 
-    var index: i32 = 0;
+    var index = 0
     for task in tasks {
-        index = index + 1;
-        var mark: str = "[ ]";
+        index = index + 1
+        var mark = "[ ]"
         if task.done {
-            mark = "[x]";
+            mark = "[x]"
         }
-        print(str_of_i64(index as i64) + ". " + mark + " " + task.title);
+        print("$index. $mark ${task.title}")
     }
 
-    print(count_done(tasks));
-    print(tasks.len);
+    print("${count_done(tasks)} of ${tasks.len} done")
 }

@@ -1,0 +1,1 @@
+no arguments; run with: gable run examples/args.gable -- Ada Grace

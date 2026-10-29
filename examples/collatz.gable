@@ -1,16 +1,16 @@
-// Prints the Collatz trajectory of 27 and its length.
+// Prints the Collatz trajectory of 27 and how many steps it takes.
 fn main() {
-    var value: i64 = 27;
-    var steps: i32 = 0;
+    var value = 27
+    var steps = 0
     while value != 1 {
-        print(value);
+        print(value)
         if value % 2 == 0 {
-            value = value / 2;
+            value = value / 2
         } else {
-            value = 3 * value + 1;
+            value = 3 * value + 1
         }
-        steps = steps + 1;
+        steps = steps + 1
     }
-    print(1);
-    print(steps);
+    print(1)
+    print("$steps steps")
 }

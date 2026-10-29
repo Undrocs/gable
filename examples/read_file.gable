@@ -1,0 +1,32 @@
+// Reading a file: the result says whether the read worked, so the failure is
+// handled where the file is read rather than somewhere later.
+fn count_lines(text: str) -> int {
+    var lines = 0
+    for line in text.split("\n") {
+        if line.trim() != "" {
+            lines = lines + 1
+        }
+    }
+    return lines
+}
+
+fn main() -> int {
+    if arg_count() < 2 {
+        print("usage: gable run examples/read_file.gable -- <path>")
+        print("with no path, this reads a file that does not exist:")
+        let missing = fs_read_text("no-such-file.txt") else {
+            print("the read failed, so the 'else' block ran: ok = ${missing.ok}")
+            return 0
+        }
+        print("unexpectedly read ${missing.text}")
+        return 0
+    }
+
+    let path = arg(1)
+    let read = fs_read_text(path) else {
+        eprint("cannot read $path: ${read.error}")
+        return 1
+    }
+    print("$path: ${read.text.len} bytes, ${count_lines(read.text)} lines")
+    return 0
+}

@@ -793,7 +793,10 @@ ir::StmtPtr SemanticAnalyzer::checkFor(const ast::Stmt& stmt) {
       popScope();
       return nullptr;
     }
-    if (!iterable->type.isIterable()) {
+    if (iterable->type.kind() == ir::TypeKind::Error) {
+      // The iterable already failed to check; reporting it again would be noise.
+      variableType = ir::Type::error();
+    } else if (!iterable->type.isIterable()) {
       diagnostics_.error(currentFile_, stmt.value->span,
                          "a 'for' loop iterates over an array, a list, or a range such as 0..n, "
                          "found '" +
@@ -1477,12 +1480,44 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
     }
     return list;
   }
-  if (!expected || expected->kind() != ir::TypeKind::Array) {
+  if (!expected) {
+    // Nothing says what the literal holds, but its elements may still agree:
+    // `for name in ["ada", "grace"]` and `let xs = [1, 2, 3]` are unambiguous.
+    std::vector<ir::ExprPtr> elements;
+    ir::Type elementType = ir::Type::error();
+    bool agrees = true;
+    for (const auto& element : expr.arguments) {
+      ir::ExprPtr lowered = checkExpr(*element, std::nullopt);
+      if (lowered->type.kind() == ir::TypeKind::Error) {
+        agrees = false;
+      } else if (elementType.kind() == ir::TypeKind::Error) {
+        elementType = lowered->type;
+      } else if (lowered->type != elementType) {
+        agrees = false;
+      }
+      elements.push_back(std::move(lowered));
+    }
+    if (agrees && elementType.kind() != ir::TypeKind::Error && !elements.empty() &&
+        elementType.kind() != ir::TypeKind::Void) {
+      const ir::Type arrayType =
+          module_->types.array(elementType, static_cast<std::uint64_t>(elements.size()));
+      auto lowered =
+          std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, arrayType, expr.span);
+      lowered->arguments = std::move(elements);
+      return lowered;
+    }
     diagnostics_.error(currentFile_, expr.span,
                        "cannot infer the type of an array literal from its elements");
     diagnostics_.note(currentFile_, expr.span,
-                      "annotate the binding, for example 'let values: [i32; 3] = [1, 2, 3];' "
-                      "for a fixed array, or 'let totals: [i32] = [0];' for a growable list");
+                      "annotate the binding, for example 'let values: [int; 3] = [1, 2, 3];' "
+                      "for a fixed array, or 'let totals: [int] = [0];' for a growable list");
+    return std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, ir::Type::error(),
+                                      expr.span);
+  }
+
+  if (expected->kind() != ir::TypeKind::Array) {
+    diagnostics_.error(currentFile_, expr.span,
+                       "cannot infer the type of an array literal from its elements");
     for (const auto& element : expr.arguments) {
       checkExpr(*element, std::nullopt);
     }

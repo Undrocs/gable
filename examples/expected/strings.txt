@@ -1,0 +1,7 @@
+hello, gable
+'hello, gable' has 12 bytes
+3 names: ada and grace and hopper
+'gable' starts at 7
+first five bytes: hello
+parsed -1234, doubled -2468
+escaped: $name, cost: $5
