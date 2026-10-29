@@ -1,8 +1,9 @@
 # notes
 
-A small task list written in Gable. It is the acceptance test for the 0.2
-language work: a real multi-file command-line program that takes arguments, uses
-strings and structured data, and keeps its tasks in a plain text file.
+A small task list written in Gable. It is the acceptance test for the language
+work: a real multi-file command-line program that takes arguments, uses strings
+and structured data, handles failures where the value is bound, and keeps its
+tasks in a plain text file.
 
 ```
 notes [--file <path>] add <title...>
@@ -47,9 +48,11 @@ and left untouched.
 * Three files: `text.gable` splits lines and stored tasks, `storage.gable` reads,
   rewrites, and validates the file, `notes.gable` parses the command line and
   dispatches.
-* Gable 0.2 arrays have a compile-time length, so the tool never holds the whole
-  list in memory. Each command streams over the file contents and rewrites the
-  parts it keeps.
+* The whole file is read once, split into a `[Task]`, changed, and joined back
+  once, because a growable list plus `.split`/`.join` is cheaper than copying the
+  text per line and leaves the code readable.
+* Every file operation is `let value = ... else { ... }`, so a failure is handled
+  where the value is bound instead of three lines later.
 * Reading a missing file yields an empty list rather than an error, so the first
   `add` creates the file.
 

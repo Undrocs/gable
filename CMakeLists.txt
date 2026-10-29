@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
   gable
-  VERSION 0.2.0
+  VERSION 0.3.0
   DESCRIPTION "The Gable programming language compiler"
   HOMEPAGE_URL "https://github.com/Undrocs/gable"
   LANGUAGES C CXX
@@ -183,7 +183,7 @@ if(BUILD_TESTING)
   target_include_directories(gable_unit_tests PRIVATE tests/unit)
   add_test(NAME unit COMMAND gable_unit_tests)
 
-  # The notes tool is the v0.2 acceptance test: a real multi-file program that
+  # The notes tool is the acceptance test: a real multi-file program that
   # is built and driven through its command line.
   add_executable(notes_tool_tests tools/notes/tests/notes_tool_tests.cpp)
   target_link_libraries(notes_tool_tests PRIVATE gable_compiler)

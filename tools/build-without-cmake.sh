@@ -39,7 +39,7 @@ install_runtime_include=${GABLE_INSTALL_RUNTIME_INCLUDE:-/usr/local/include}
 install_runtime_lib=${GABLE_INSTALL_RUNTIME_LIB:-/usr/local/lib/libgable_rt.a}
 common=(-std=c++20 -pthread -I"$root/compiler/include" -Wall -Wextra -Wpedantic -Wshadow
         -Wconversion -Wsign-conversion -Wnon-virtual-dtor -Wold-style-cast
-        -DGABLE_VERSION_STRING=\"0.2.0\"
+        -DGABLE_VERSION_STRING=\"0.3.0\"
         -DGABLE_BUILD_RUNTIME_INCLUDE=\"$build_runtime_include\"
         -DGABLE_BUILD_RUNTIME_LIB=\"$build_runtime_lib\"
         -DGABLE_INSTALL_RUNTIME_INCLUDE=\"$install_runtime_include\"

@@ -8,22 +8,21 @@ language to native executables today. Its syntax and semantics will change. It i
 not ready for general use.
 
 ```gable
-fn add(a: i64, b: i64) -> i64 {
-    return a + b;
+fn add(a: int, b: int) -> int {
+    return a + b
 }
 
-fn main() -> i32 {
-    let result: i64 = add(20, 22);
-    print("Hello from Gable!");
-    print(result);
-    return 0;
+fn main() {
+    let result = add(20, 22)
+    print("Hello from Gable!")
+    print("20 + 22 = $result")
 }
 ```
 
 ```
 $ gable run hello.gable
 Hello from Gable!
-42
+20 + 22 = 42
 ```
 
 ## What works
@@ -34,23 +33,30 @@ Hello from Gable!
 * Semantic analysis: one program-wide namespace across imported files, lexical
   scopes, shadowing, duplicate detection, `let`/`var` immutability, return-path
   checking.
-* Types: `i8` `i16` `i32` `i64`, `u8` `u16` `u32` `u64`, `bool`, `str`, `void`,
-  value structs, and fixed-size arrays.
+* Types: `int` (64-bit) as the everyday number, the narrower `i8`–`u64` widths
+  for data that has a width, `bool`, `str`, `void`, value structs, fixed-size
+  arrays, and growable lists.
 * Arithmetic (wrapping, defined), comparison, boolean operators with
   short-circuiting, explicit `as` conversions with defined narrowing.
-* Functions, parameters, recursion, mutual recursion, conditionals, `while`,
-  `for` over ranges and arrays, `break`, `continue`, nested blocks.
-* Strings with an explicit length: concatenation, equality, byte length, search,
-  slicing, trimming, and number conversion.
+* Statements that end at a line break (`;` is still accepted), functions with
+  inferred or annotated types, recursion, conditionals, `while`, `for` over
+  ranges, arrays, and lists, `break`, `continue`, nested blocks.
+* Strings with an explicit length: concatenation, interpolation (`"hello $name"`,
+  `"${count + 1}"`), equality, byte length, search, slicing, trimming, splitting,
+  joining, and number conversion, with the string operations written on the value
+  (`text.trim().split(",")`).
+* Growable lists (`[T]`) with append, indexing, and iteration, and `let value =
+  fallible() else { ... }` for handling a failure where the value is bound.
 * Command-line arguments and whole-file text input and output that report failures
   as values instead of trapping.
 * Native executables through a typed IR and a C17 backend, plus `--emit-c` for
   inspecting the generated code.
 * `gable build`, `gable run`, and `gable check`, with defined exit statuses and
   atomic, input-safe output handling.
-* 215 unit tests, 58 end-to-end cases, 10 example programs, 83 acceptance tests
-  for the notes tool, and 82 runtime file tests — run in Debug, Release, and
-  AddressSanitizer/UBSan configurations.
+* 273 unit tests, 65 end-to-end cases, 14 example programs whose printed output
+  is compared against `examples/expected/`, 83 acceptance tests for the notes
+  tool, and 107 runtime tests — run in Debug, Release, and AddressSanitizer/UBSan
+  configurations.
 
 ## Platform support
 
@@ -65,9 +71,10 @@ runs on them. Everything else is untested.
 
 ## What does not work yet
 
-No generics, traits, closures, pointers, enums, dynamic arrays, maps, or
-exceptions. There is no memory reclamation: strings built at run time are never
-freed. There is no formatter, language server, or package manager. The backend
+No generics, traits, closures, pointers, enums, maps, or exceptions. There is no
+formatter, language server, editor grammar, or package manager. Strings built at
+run time are reclaimed automatically, but text built with `+` in a loop is still
+copied every time: collect the pieces in a `[str]` and join them once. The backend
 emits C17 and uses the host C compiler; there is no LLVM backend yet, because no
 LLVM development files were available when the first backend was written.
 [docs/decisions.md](docs/decisions.md) explains that decision and the migration
@@ -119,7 +126,7 @@ documents the build, the CLI, environment variables, and troubleshooting.
 
 | Document | Contents |
 | --- | --- |
-| [docs/specification.md](docs/specification.md) | Language specification for version 0.2 |
+| [docs/specification.md](docs/specification.md) | Language specification for version 0.3 |
 | [docs/architecture.md](docs/architecture.md) | Compiler pipeline and component responsibilities |
 | [docs/decisions.md](docs/decisions.md) | Design decisions, rejected alternatives, revisit triggers |
 | [docs/getting-started.md](docs/getting-started.md) | Build, install, CLI reference, exit statuses |
