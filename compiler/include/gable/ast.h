@@ -41,6 +41,9 @@ struct Expr {
     IntegerLiteral,
     BoolLiteral,
     StringLiteral,
+    /// `"total: $count"`: text parts around expressions, lowered to string
+    /// concatenation with the same conversions `+` would need.
+    InterpolatedString,
     Name,
     Unary,
     Binary,
@@ -64,6 +67,9 @@ struct Expr {
   bool boolValue = false;
   // StringLiteral
   std::string stringValue;
+  // InterpolatedString: one argument per interpolation and, in `parts`, the text
+  // before the first, between each pair, and after the last (arguments.size() + 1).
+  std::vector<std::string> parts;
   // Name, and the callee name for Call
   std::string name;
   // Unary / Binary

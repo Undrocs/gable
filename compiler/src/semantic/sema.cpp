@@ -799,6 +799,8 @@ ir::ExprPtr SemanticAnalyzer::checkExpr(const ast::Expr& expr, std::optional<ir:
       lowered->stringValue = expr.stringValue;
       return lowered;
     }
+    case ast::Expr::Kind::InterpolatedString:
+      return checkInterpolatedString(expr);
     case ast::Expr::Kind::Name: {
       const Binding* binding = lookup(expr.name);
       if (binding == nullptr) {
@@ -1436,6 +1438,68 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
     lowered->arguments.push_back(conformTo(*element, elementType, "array element"));
   }
   return lowered;
+}
+
+ir::ExprPtr SemanticAnalyzer::checkInterpolatedString(const ast::Expr& expr) {
+  auto stringLiteral = [](std::string text, SourceSpan span) {
+    auto node = std::make_unique<ir::Expr>(ir::Expr::Kind::StringLiteral, ir::Type::str(), span);
+    node->stringValue = std::move(text);
+    return node;
+  };
+
+  ir::ExprPtr result;
+  auto append = [&](ir::ExprPtr piece) {
+    if (!result) {
+      result = std::move(piece);
+      return;
+    }
+    auto concat =
+        std::make_unique<ir::Expr>(ir::Expr::Kind::Binary, ir::Type::str(), expr.span);
+    concat->binaryOp = BinaryOp::Add;
+    concat->lhs = std::move(result);
+    concat->rhs = std::move(piece);
+    result = std::move(concat);
+  };
+
+  const std::size_t count = expr.arguments.size();
+  for (std::size_t i = 0; i < count; ++i) {
+    if (i < expr.parts.size() && !expr.parts[i].empty()) {
+      append(stringLiteral(expr.parts[i], expr.span));
+    }
+
+    const ast::Expr& argument = *expr.arguments[i];
+    ir::ExprPtr value = checkExpr(argument, std::nullopt);
+    if (value->type.kind() == ir::TypeKind::Error) {
+      continue;
+    }
+    if (value->type == ir::Type::str()) {
+      append(std::move(value));
+      continue;
+    }
+    if (value->type.isInteger() || value->type == ir::Type::boolean()) {
+      const bool isInteger = value->type.isInteger();
+      auto converted = std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::str(),
+                                                  argument.span);
+      converted->builtin = isInteger ? ir::Builtin::StrOfI64 : ir::Builtin::StrOfBool;
+      converted->name = isInteger ? "str_of_i64" : "str_of_bool";
+      converted->arguments.push_back(std::move(value));
+      append(std::move(converted));
+      continue;
+    }
+    diagnostics_.error(currentFile_, argument.span,
+                       "cannot put a value of type '" +
+                           ir::typeName(value->type, *module_) + "' into a string literal");
+    diagnostics_.note(currentFile_, argument.span,
+                      "a string literal interpolates str, integers, and bool; convert the value "
+                      "first, for example with str_of_i64");
+  }
+  if (!expr.parts.empty() && !expr.parts.back().empty()) {
+    append(stringLiteral(expr.parts.back(), expr.span));
+  }
+  if (!result) {
+    return stringLiteral(std::string(), expr.span);
+  }
+  return result;
 }
 
 void SemanticAnalyzer::pushScope() { scopes_.emplace_back(); }

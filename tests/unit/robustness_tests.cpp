@@ -162,6 +162,14 @@ GABLE_TEST(robustness_handles_unterminated_constructs) {
   analyzeWithoutCrashing("fn main() -> int { let x: i32 = 1 + ");
 }
 
+GABLE_TEST(robustness_handles_malformed_interpolation) {
+  analyzeWithoutCrashing("fn main() { print(\"$\"); }");
+  analyzeWithoutCrashing("fn main() { print(\"${}\") ; }");
+  analyzeWithoutCrashing("fn main() { print(\"${1 + 2\"); }");
+  analyzeWithoutCrashing("fn main() { print(\"${ \"); }");
+  analyzeWithoutCrashing("fn main() { print(\"${${${${${${${${${1}${1}${1}${1}${1}${1}${1}${1}${1}${1}\"); }");
+}
+
 GABLE_TEST(robustness_rejects_null_bytes_in_source) {
   std::string source = "fn main() -> int { return 0; }";
   source.push_back('\0');

@@ -891,6 +891,40 @@ ast::ExprPtr Parser::parsePrimary() {
       expressionDepth_ = 1;
       return parsePostfix(std::move(expr));
     }
+    case TokenKind::StringStart: {
+      advance();
+      auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::InterpolatedString, token.span);
+      expr->parts.push_back(token.stringValue);
+      int argumentDepth = 0;
+      for (;;) {
+        ast::ExprPtr argument = parseExpression(0);
+        if (!argument) {
+          return nullptr;
+        }
+        argumentDepth = std::max(argumentDepth, expressionDepth_);
+        expr->arguments.push_back(std::move(argument));
+        if (check(TokenKind::StringPart)) {
+          expr->parts.push_back(current().stringValue);
+          advance();
+          continue;
+        }
+        if (check(TokenKind::StringEnd)) {
+          expr->parts.push_back(current().stringValue);
+          expr->span = SourceSpan{token.span.begin, current().span.end};
+          advance();
+          break;
+        }
+        error(current().span,
+              "expected the end of the string literal after an interpolation, found " +
+                  std::string(tokenKindName(current().kind)));
+        return nullptr;
+      }
+      if (!growTreeDepth(argumentDepth + 1, token.span)) {
+        return nullptr;
+      }
+      expressionDepth_ = argumentDepth + 1;
+      return parsePostfix(std::move(expr));
+    }
     case TokenKind::KwTrue:
     case TokenKind::KwFalse: {
       advance();

@@ -13,7 +13,14 @@ enum class TokenKind {
   EndOfFile,
   Identifier,
   IntegerLiteral,
+  /// A string literal with no interpolation.
   StringLiteral,
+  /// The text before the first `$` of an interpolated string, the text between
+  /// two interpolations, and the text after the last one. The parser builds one
+  /// expression from the three kinds, so the lexer never has to know the grammar.
+  StringStart,
+  StringPart,
+  StringEnd,
 
   // Keywords.
   KwFn,

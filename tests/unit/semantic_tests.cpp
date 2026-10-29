@@ -819,6 +819,26 @@ GABLE_TEST(sema_checks_the_element_type_of_list_push) {
   GABLE_CHECK(mentions(analysis, "expected 'int', found 'str'"));
 }
 
+GABLE_TEST(sema_lowers_string_interpolation) {
+  const auto analysis = analyze(inMain(
+      "  let count: int = 2;\n"
+      "  let done: bool = true;\n"
+      "  print(\"rows: $count, done: $done\");\n"
+      "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_interpolating_a_struct) {
+  const auto analysis = analyze(
+      "struct Point { x: int }\n"
+      "fn main() {\n"
+      "  let p = Point(1);\n"
+      "  print(\"point: $p\");\n"
+      "}\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "cannot put a value of type 'Point' into a string literal"));
+}
+
 GABLE_TEST(sema_rejects_list_push_on_a_non_list) {
   const auto analysis = analyze(inMain("  let count: i32 = 1;\n  list_push(count, 2);\n  return 0;"));
   GABLE_CHECK(!analysis.ok());

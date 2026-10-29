@@ -119,6 +119,33 @@ GABLE_TEST(lexer_reports_unterminated_string) {
   GABLE_CHECK(diagnostics.find("unterminated string literal") != std::string::npos);
 }
 
+GABLE_TEST(lexer_splits_an_interpolated_string_into_parts) {
+  std::string diagnostics;
+  const auto tokens = lexAll("\"total: $count done\"", diagnostics);
+  GABLE_CHECK_EQ(std::string(""), diagnostics);
+  // The text, the name, the text, and the end of the line are one string.
+  GABLE_CHECK(tokens.size() >= 4);
+  GABLE_CHECK(tokens[0].kind == gable::TokenKind::StringStart);
+  GABLE_CHECK_EQ(std::string("total: "), tokens[0].stringValue);
+  GABLE_CHECK(tokens[1].kind == gable::TokenKind::Identifier);
+  GABLE_CHECK_EQ(std::string("count"), tokens[1].text);
+  GABLE_CHECK(tokens[2].kind == gable::TokenKind::StringEnd);
+}
+
+GABLE_TEST(lexer_keeps_a_dollar_that_is_not_interpolation) {
+  std::string diagnostics;
+  const auto tokens = lexAll("\"costs $5 and \\$6\"", diagnostics);
+  GABLE_CHECK_EQ(std::string(""), diagnostics);
+  GABLE_CHECK_EQ(gable::TokenKind::StringLiteral, tokens[0].kind);
+  GABLE_CHECK_EQ(std::string("costs $5 and $6"), tokens[0].stringValue);
+}
+
+GABLE_TEST(lexer_reports_an_unterminated_interpolation) {
+  std::string diagnostics;
+  lexAll("\"a ${1 + 2\n", diagnostics);
+  GABLE_CHECK(diagnostics.find("unterminated interpolation") != std::string::npos);
+}
+
 GABLE_TEST(lexer_reports_unterminated_block_comment) {
   std::string diagnostics;
   lexAll("/* comment", diagnostics);

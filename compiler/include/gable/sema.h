@@ -94,6 +94,9 @@ class SemanticAnalyzer {
   ir::ExprPtr checkIndex(const ast::Expr& expr);
   ir::ExprPtr checkCast(const ast::Expr& expr);
   ir::ExprPtr checkArrayLiteral(const ast::Expr& expr, std::optional<ir::Type> expected);
+  /// `"a $b c"` becomes string concatenation, converting integers and booleans
+  /// to text with the same built-ins a program would call itself.
+  ir::ExprPtr checkInterpolatedString(const ast::Expr& expr);
   ir::ExprPtr checkIntegerLiteral(const ast::Expr& expr, std::optional<ir::Type> expected);
 
   /// Resolves an assignment target and reports expressions that are not
