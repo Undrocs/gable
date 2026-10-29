@@ -5,7 +5,7 @@ struct Reserved {
     switch: i32,
     case: i32,
     default: i32,
-    int: i32,
+    unsigned: i32,
     errno: i32,
     NULL: i32,
     assert: i32,
@@ -24,10 +24,10 @@ fn read_value(config: Reserved) -> i32 {
     return config.switch + config.case + config.default;
 }
 
-fn main() -> i32 {
+fn main() {
     let config: Reserved = Reserved(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
     print(read_value(config));
-    print(config.int);
+    print(config.unsigned);
     print(config.errno + config.NULL + config.assert + config.stdin);
     print(config.gable_fn_main + config.gable_s_Reserved + config.gable_rt_print_i64);
 
@@ -36,5 +36,4 @@ fn main() -> i32 {
     print(nested.inner.default);
     print(nested.label);
     print(config.default);
-    return 0;
 }

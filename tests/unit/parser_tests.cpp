@@ -47,7 +47,7 @@ const std::vector<gable::ast::StmtPtr>* mainBody(const ParseOutcome& outcome) {
 }
 
 std::string wrapInMain(const std::string& body) {
-  return "fn main() -> i32 {\n" + body + "\n}\n";
+  return "fn main() -> int {\n" + body + "\n}\n";
 }
 
 }  // namespace
@@ -96,13 +96,13 @@ GABLE_TEST(parser_parses_array_types) {
 }
 
 GABLE_TEST(parser_parses_imports_and_rejects_late_imports) {
-  const ParseOutcome good = parse("import \"util.gable\";\nfn main() -> i32 { return 0; }\n");
+  const ParseOutcome good = parse("import \"util.gable\";\nfn main() -> int { return 0; }\n");
   GABLE_CHECK(good.ok);
   GABLE_CHECK_EQ(std::size_t(1), good.program.imports.size());
   GABLE_CHECK_EQ(std::string("util.gable"), good.program.imports[0].path);
 
   const ParseOutcome late =
-      parse("fn main() -> i32 { return 0; }\nimport \"util.gable\";\n");
+      parse("fn main() -> int { return 0; }\nimport \"util.gable\";\n");
   GABLE_CHECK(!late.ok);
   GABLE_CHECK(late.diagnostics.find("imports must appear before") != std::string::npos);
 }
@@ -190,9 +190,25 @@ GABLE_TEST(parser_respects_operator_precedence) {
   GABLE_CHECK(expression->lhs->lhs->rhs->binaryOp == gable::BinaryOp::Multiply);
 }
 
-GABLE_TEST(parser_reports_missing_semicolon) {
-  const ParseOutcome outcome = parse(wrapInMain("  let a: i32 = 1\n  return 0;"));
+GABLE_TEST(parser_ends_statements_at_a_line_break) {
+  const ParseOutcome outcome = parse(wrapInMain("  let a: i32 = 1\n  let b: i32 = 2"));
+  GABLE_CHECK(outcome.ok);
+}
+
+GABLE_TEST(parser_accepts_a_semicolon_as_a_statement_end) {
+  const ParseOutcome outcome = parse(wrapInMain("  let a: i32 = 1; let b: i32 = 2"));
+  GABLE_CHECK(outcome.ok);
+}
+
+GABLE_TEST(parser_reports_two_statements_on_one_line) {
+  const ParseOutcome outcome = parse(wrapInMain("  let a: i32 = 1 let b: i32 = 2"));
   GABLE_CHECK(!outcome.ok);
+  GABLE_CHECK(outcome.diagnostics.find("expected a line break") != std::string::npos);
+}
+
+GABLE_TEST(parser_continues_an_expression_across_lines) {
+  const ParseOutcome outcome = parse(wrapInMain("  let a: i32 = 1\n      + 2\n  print(a)"));
+  GABLE_CHECK(outcome.ok);
 }
 
 GABLE_TEST(parser_reports_unexpected_token_with_position) {
@@ -202,7 +218,7 @@ GABLE_TEST(parser_reports_unexpected_token_with_position) {
 }
 
 GABLE_TEST(parser_rejects_nested_functions_and_structs) {
-  const ParseOutcome nestedFunction = parse("fn main() -> i32 { fn inner() { return; } return 0; }\n");
+  const ParseOutcome nestedFunction = parse("fn main() -> int { fn inner() { return; } return 0; }\n");
   GABLE_CHECK(!nestedFunction.ok);
   GABLE_CHECK(nestedFunction.diagnostics.find("nested function declarations are not supported") !=
               std::string::npos);
@@ -212,7 +228,7 @@ GABLE_TEST(parser_rejects_nested_functions_and_structs) {
 }
 
 GABLE_TEST(parser_requires_braced_bodies) {
-  const ParseOutcome outcome = parse("fn main() -> i32 return 0;\n");
+  const ParseOutcome outcome = parse("fn main() -> int return 0;\n");
   GABLE_CHECK(!outcome.ok);
 }
 
@@ -222,7 +238,7 @@ GABLE_TEST(parser_rejects_range_outside_for_header) {
 }
 
 GABLE_TEST(parser_limits_nesting_depth) {
-  std::string source = "fn main() -> i32 { return ";
+  std::string source = "fn main() -> int { return ";
   for (int i = 0; i < 500; ++i) {
     source += "(";
   }

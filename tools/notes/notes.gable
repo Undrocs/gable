@@ -11,7 +11,7 @@
 import "storage.gable";
 
 /// More tasks than this is treated as a file this tool should not rewrite.
-fn max_tasks() -> i64 {
+fn max_tasks() -> int {
     return 100000;
 }
 
@@ -34,7 +34,7 @@ fn report_storage_error(prefix: str, error: str) -> void {
     return;
 }
 
-fn parse_number(text: str) -> i64 {
+fn parse_number(text: str) -> int {
     let parsed = parse_i64(text);
     if !parsed.ok {
         return 0;
@@ -45,12 +45,12 @@ fn parse_number(text: str) -> i64 {
     return parsed.value;
 }
 
-fn list_tasks(tasks: [Task]) -> i32 {
+fn list_tasks(tasks: [Task]) -> int {
     if tasks.len == 0 {
         print("no tasks");
         return 0;
     }
-    var index: i32 = 1;
+    var index: int = 1;
     for task in tasks {
         print(render_line(index, task));
         index = index + 1;
@@ -59,15 +59,15 @@ fn list_tasks(tasks: [Task]) -> i32 {
 }
 
 /// Returns `tasks` with the task at one-based `target` marked done.
-fn mark_done(tasks: [Task], target: i64) -> void {
+fn mark_done(tasks: [Task], target: int) -> void {
     tasks[target - 1].done = true;
     return;
 }
 
 /// Returns `tasks` without the task at one-based `target`.
-fn without_task(tasks: [Task], target: i64) -> [Task] {
+fn without_task(tasks: [Task], target: int) -> [Task] {
     var kept: [Task] = [];
-    var index: i64 = 1;
+    var index: int = 1;
     for task in tasks {
         if index != target {
             list_push(kept, task);
@@ -79,7 +79,7 @@ fn without_task(tasks: [Task], target: i64) -> [Task] {
 
 /// Performs one mutating command while the lock is held and returns the exit
 /// status. The caller releases the lock.
-fn run_mutation(path: str, command: str, argument: str) -> i32 {
+fn run_mutation(path: str, command: str, argument: str) -> int {
     if command == "add" && !is_valid_title(argument) {
         eprint("notes: a task title must not be empty or contain tabs or line breaks");
         return 1;
@@ -142,11 +142,11 @@ fn run_mutation(path: str, command: str, argument: str) -> i32 {
     return 0;
 }
 
-fn main() -> i32 {
+fn main() -> int {
     var path: str = "notes.txt";
     var command: str = "";
     var argument: str = "";
-    var index: i32 = 1;
+    var index: int = 1;
     var options_ended: bool = false;
 
     while index < arg_count() {

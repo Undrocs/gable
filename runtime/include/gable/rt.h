@@ -57,13 +57,13 @@ typedef struct {
   bool ok;
   gable_str text;
   gable_str error;
-  int32_t code;
+  int64_t code;
 } gable_rt_FileReadResult;
 
 typedef struct {
   bool ok;
   gable_str error;
-  int32_t code;
+  int64_t code;
 } gable_rt_FileWriteResult;
 
 typedef struct {
@@ -211,8 +211,8 @@ gable_str gable_rt_str_trim(gable_str text);
  * UTF-8, because Gable strings are UTF-8. POSIX hosts pass byte sequences
  * through unchanged. */
 void gable_rt_set_args(int argc, char **argv);
-int32_t gable_rt_arg_count(void);
-gable_str gable_rt_arg(int32_t index);
+int64_t gable_rt_arg_count(void);
+gable_str gable_rt_arg(int64_t index);
 
 /* Files. The whole file is read into memory; failures are reported through the
  * returned struct rather than by trapping. */

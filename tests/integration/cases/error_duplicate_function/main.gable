@@ -6,6 +6,6 @@ fn work() -> i32 {
     return 2;
 }
 
-fn main() -> i32 {
+fn main() -> int {
     return work();
 }

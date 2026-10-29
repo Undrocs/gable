@@ -20,7 +20,8 @@ constexpr KeywordEntry kKeywords[] = {
     {"while", TokenKind::KwWhile},   {"true", TokenKind::KwTrue},
     {"false", TokenKind::KwFalse},   {"i8", TokenKind::KwI8},
     {"i16", TokenKind::KwI16},       {"i32", TokenKind::KwI32},
-    {"i64", TokenKind::KwI64},       {"u8", TokenKind::KwU8},
+    {"i64", TokenKind::KwI64},       {"int", TokenKind::KwInt},
+    {"u8", TokenKind::KwU8},
     {"u16", TokenKind::KwU16},       {"u32", TokenKind::KwU32},
     {"u64", TokenKind::KwU64},       {"bool", TokenKind::KwBool},
     {"str", TokenKind::KwStr},       {"void", TokenKind::KwVoid},
@@ -133,6 +134,7 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::KwI16: return "'i16'";
     case TokenKind::KwI32: return "'i32'";
     case TokenKind::KwI64: return "'i64'";
+    case TokenKind::KwInt: return "'int'";
     case TokenKind::KwU8: return "'u8'";
     case TokenKind::KwU16: return "'u16'";
     case TokenKind::KwU32: return "'u32'";
@@ -191,10 +193,14 @@ bool Lexer::match(char expected) {
   return true;
 }
 
-void Lexer::skipWhitespaceAndComments() {
+bool Lexer::skipWhitespaceAndComments() {
+  bool sawLineBreak = false;
   for (;;) {
     const char c = peek();
     if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      if (c == '\n') {
+        sawLineBreak = true;
+      }
       ++offset_;
       continue;
     }
@@ -224,7 +230,7 @@ void Lexer::skipWhitespaceAndComments() {
       }
       continue;
     }
-    return;
+    return sawLineBreak;
   }
 }
 
@@ -244,11 +250,17 @@ std::vector<Token> Lexer::tokenize() {
   }
 
   while (!atEnd()) {
-    skipWhitespaceAndComments();
+    const bool lineBreak = skipWhitespaceAndComments();
     if (atEnd()) {
       break;
     }
+    const std::size_t before = tokens.size();
     scanToken(tokens);
+    // `scanToken` may push more than one token (a string literal does), and all
+    // of them follow the same line break.
+    for (std::size_t i = before; i < tokens.size(); ++i) {
+      tokens[i].newlineBefore = lineBreak;
+    }
   }
 
   Token eof;

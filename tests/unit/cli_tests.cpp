@@ -157,11 +157,13 @@ GABLE_TEST(cli_emit_c_writes_translation_unit_to_file) {
 
 GABLE_TEST(cli_reports_syntax_errors_with_exit_code_one) {
   gable::TemporaryDirectory directory = makeDirectory();
-  const std::string source = writeSource(directory, "bad.gable", "fn main() -> i32 { return 0 }\n");
+  // Two statements on one line: a line break or ';' has to separate them.
+  const std::string source =
+      writeSource(directory, "bad.gable", "fn main() -> int {\n  let a = 1 let b = 2\n}\n");
   const Run run = runCli({"build", source});
   GABLE_CHECK_EQ(1, run.exitCode);
-  GABLE_CHECK(run.err.find("expected ';'") != std::string::npos);
-  GABLE_CHECK(run.err.find("bad.gable:1:") != std::string::npos);
+  GABLE_CHECK(run.err.find("expected a line break") != std::string::npos);
+  GABLE_CHECK(run.err.find("bad.gable:2:") != std::string::npos);
   GABLE_CHECK(run.err.find("error:") != std::string::npos);
 }
 
@@ -253,7 +255,7 @@ GABLE_TEST(cli_keeps_existing_executable_when_build_fails) {
   before.close();
   GABLE_CHECK(!original.str().empty());
 
-  writeSource(directory, "flaky.gable", "fn main() -> i32 { return missing; }\n");
+  writeSource(directory, "flaky.gable", "fn main() -> int { return missing; }\n");
   const Run failed = runCli({"build", source, "-o", output});
   GABLE_CHECK_EQ(1, failed.exitCode);
 
@@ -319,7 +321,7 @@ GABLE_TEST(cli_check_accepts_a_valid_program) {
 GABLE_TEST(cli_check_reports_type_errors) {
   gable::TemporaryDirectory directory = makeDirectory();
   const std::string source =
-      writeSource(directory, "invalid.gable", "fn main() -> i32 { return missing; }\n");
+      writeSource(directory, "invalid.gable", "fn main() -> int { return missing; }\n");
   const Run run = runCli({"check", source});
   GABLE_CHECK_EQ(1, run.exitCode);
   GABLE_CHECK(run.err.find("undefined variable 'missing'") != std::string::npos);
@@ -329,10 +331,10 @@ GABLE_TEST(cli_check_reports_type_errors) {
 GABLE_TEST(cli_check_reports_syntax_errors) {
   gable::TemporaryDirectory directory = makeDirectory();
   const std::string source =
-      writeSource(directory, "broken.gable", "fn main() -> i32 { return 0 }\n");
+      writeSource(directory, "broken.gable", "fn main() -> int {\n  let a = 1 let b = 2\n}\n");
   const Run run = runCli({"check", source});
   GABLE_CHECK_EQ(1, run.exitCode);
-  GABLE_CHECK(run.err.find("expected ';'") != std::string::npos);
+  GABLE_CHECK(run.err.find("expected a line break") != std::string::npos);
 }
 
 GABLE_TEST(cli_check_rejects_output_options) {
@@ -345,7 +347,7 @@ GABLE_TEST(cli_run_forwards_arguments_after_double_dash) {
   gable::TemporaryDirectory directory = makeDirectory();
   const std::string source = writeSource(
       directory, "args.gable",
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  if arg_count() != 3 { return 1; }\n"
       "  if arg(1) != \"first\" { return 2; }\n"
       "  if arg(2) != \"second\" { return 3; }\n"
@@ -358,7 +360,7 @@ GABLE_TEST(cli_run_forwards_arguments_after_double_dash) {
 GABLE_TEST(cli_run_forwards_the_program_exit_status) {
   gable::TemporaryDirectory directory = makeDirectory();
   const std::string source =
-      writeSource(directory, "status.gable", "fn main() -> i32 { return 7; }\n");
+      writeSource(directory, "status.gable", "fn main() -> int { return 7; }\n");
   const Run run = runCli({"run", source});
   GABLE_CHECK_EQ(7, run.exitCode);
 }
@@ -490,7 +492,7 @@ GABLE_TEST(cli_leaves_foreign_files_alone) {
 GABLE_TEST(cli_removes_its_staging_directory) {
   gable::TemporaryDirectory directory = makeDirectory();
   const std::string good = writeSource(directory, "good.gable", gabletest::kSimpleProgram());
-  const std::string bad = writeSource(directory, "bad.gable", "fn main() -> i32 { return x; }\n");
+  const std::string bad = writeSource(directory, "bad.gable", "fn main() -> int { return x; }\n");
 
   GABLE_CHECK_EQ(0, runCli({"build", good, "-o", directory.file("ok")}).exitCode);
   GABLE_CHECK_EQ(1, runCli({"build", bad, "-o", directory.file("failed")}).exitCode);

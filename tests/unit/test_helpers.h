@@ -106,7 +106,7 @@ inline std::string emitCForProject(const std::map<std::string, std::string>& fil
 
 /// A small valid program used by several tests.
 inline const char* kSimpleProgram() {
-  return "fn main() -> i32 {\n"
+  return "fn main() -> int {\n"
          "    print(\"hello\");\n"
          "    return 0;\n"
          "}\n";

@@ -23,11 +23,11 @@ struct LoadResult {
 
 /// Stable reason codes of the file builtins, from the specification. The message
 /// in `error` is localised, so only these codes are compared.
-fn file_code_not_found() -> i32 {
+fn file_code_not_found() -> int {
     return 1;
 }
 
-fn file_code_busy() -> i32 {
+fn file_code_busy() -> int {
     return 6;
 }
 
@@ -58,7 +58,7 @@ fn load_notes(path: str) -> LoadResult {
     if read.code == file_code_not_found() {
         return LoadResult(true, [], "");
     }
-    return LoadResult(false, [], read.error + " (code " + str_of_i64(read.code as i64) + ")");
+    return LoadResult(false, [], read.error + " (code " + str_of_i64(read.code) + ")");
 }
 
 /// One stored line for `task`, without its line break.
@@ -88,7 +88,7 @@ fn render_content(tasks: [Task]) -> str {
 fn save_notes(path: str, tasks: [Task]) -> str {
     let written = fs_write_text_atomic(path, render_content(tasks));
     if !written.ok {
-        return written.error + " (code " + str_of_i64(written.code as i64) + ")";
+        return written.error + " (code " + str_of_i64(written.code) + ")";
     }
     return "";
 }
@@ -101,7 +101,7 @@ fn lock_notes(path: str) -> str {
         if locked.code == file_code_busy() {
             return "another notes command is using the file";
         }
-        return locked.error + " (code " + str_of_i64(locked.code as i64) + ")";
+        return locked.error + " (code " + str_of_i64(locked.code) + ")";
     }
     return "";
 }
@@ -109,15 +109,15 @@ fn lock_notes(path: str) -> str {
 fn unlock_notes(path: str) -> str {
     let released = fs_unlock(path);
     if !released.ok {
-        return released.error + " (code " + str_of_i64(released.code as i64) + ")";
+        return released.error + " (code " + str_of_i64(released.code) + ")";
     }
     return "";
 }
 
-fn render_line(index: i32, task: Task) -> str {
+fn render_line(index: int, task: Task) -> str {
     var mark: str = "[ ]";
     if task.done {
         mark = "[x]";
     }
-    return str_of_i64(index as i64) + ". " + mark + " " + task.title;
+    return str_of_i64(index) + ". " + mark + " " + task.title;
 }

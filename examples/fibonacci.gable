@@ -12,11 +12,10 @@ fn fib(n: i32) -> i64 {
     return a;
 }
 
-fn main() -> i32 {
+fn main() {
     var i: i32 = 0;
     while i < 15 {
         print(fib(i));
         i = i + 1;
     }
-    return 0;
 }

@@ -23,7 +23,7 @@ std::size_t positionOf(const std::string& text, const std::string& needle) {
 GABLE_TEST(codegen_emits_runtime_include_and_entry_point) {
   const std::string c = emitCFor(gabletest::kSimpleProgram());
   GABLE_CHECK(contains(c, "#include \"gable/rt.h\""));
-  GABLE_CHECK(contains(c, "static int32_t gable_fn_main(void)"));
+  GABLE_CHECK(contains(c, "static int64_t gable_fn_main(void)"));
   GABLE_CHECK(contains(c, "int main(int argc, char** argv)"));
   GABLE_CHECK(contains(c, "gable_rt_set_args(argc, argv);"));
   GABLE_CHECK(contains(c, "return (int)gable_fn_main();"));
@@ -31,7 +31,7 @@ GABLE_TEST(codegen_emits_runtime_include_and_entry_point) {
 
 GABLE_TEST(codegen_emits_string_literals_with_explicit_length) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  print(\"hello\");\n"
       "  print(\"world\");\n"
       "  return 0;\n"
@@ -43,7 +43,7 @@ GABLE_TEST(codegen_emits_string_literals_with_explicit_length) {
 
 GABLE_TEST(codegen_escapes_string_contents) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  print(\"quote:\\\" backslash:\\\\ tab:\\t newline:\\n\");\n"
       "  return 0;\n"
       "}\n");
@@ -59,14 +59,14 @@ GABLE_TEST(codegen_escapes_string_contents) {
 GABLE_TEST(codegen_computes_arithmetic_at_the_declared_width) {
   const std::string c = emitCFor(
       "fn add(a: i32, b: i32) -> i32 { return a + b; }\n"
-      "fn main() -> i32 { return add(1, 2); }\n");
+      "fn main() { print(add(1, 2)); }\n");
   GABLE_CHECK(contains(c, "(int32_t)gable_rt_trunc_i32((uint64_t)(v0_a) + (uint64_t)(v1_b))"));
 }
 
 GABLE_TEST(codegen_reduces_unsigned_arithmetic_to_the_declared_width) {
   const std::string c = emitCFor(
       "fn add(a: u8, b: u8) -> u8 { return a * b; }\n"
-      "fn main() -> i32 { return 0; }\n");
+      "fn main() -> int { return 0; }\n");
   GABLE_CHECK(contains(c, "(uint8_t)gable_rt_trunc_u8((uint64_t)(v0_a) * (uint64_t)(v1_b))"));
 }
 
@@ -75,7 +75,7 @@ GABLE_TEST(codegen_reduces_unsigned_arithmetic_to_the_declared_width) {
 // depend on the C compiler's conversion rules.
 GABLE_TEST(codegen_uses_truncation_helpers_for_narrowing_casts) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  let wide: i32 = 200;\n"
       "  let narrow: i8 = wide as i8;\n"
       "  print(narrow);\n"
@@ -87,14 +87,14 @@ GABLE_TEST(codegen_uses_truncation_helpers_for_narrowing_casts) {
 GABLE_TEST(codegen_uses_runtime_helpers_for_division) {
   const std::string c = emitCFor(
       "fn divide(a: i64, b: i64) -> i64 { return a / b; }\n"
-      "fn main() -> i32 { return 0; }\n");
+      "fn main() -> int { return 0; }\n");
   GABLE_CHECK(contains(c, "gable_rt_div_i64"));
 }
 
 GABLE_TEST(codegen_uses_unsigned_division_helpers_for_unsigned_types) {
   const std::string c = emitCFor(
       "fn divide(a: u32, b: u32) -> u32 { return a / b; }\n"
-      "fn main() -> i32 { return 0; }\n");
+      "fn main() -> int { return 0; }\n");
   GABLE_CHECK(contains(c, "gable_rt_div_u64"));
 }
 
@@ -103,7 +103,7 @@ GABLE_TEST(codegen_evaluates_call_arguments_left_to_right) {
       "fn pair(a: i32, b: i32) -> i32 { return a + b; }\n"
       "fn left() -> i32 { print(\"left\"); return 1; }\n"
       "fn right() -> i32 { print(\"right\"); return 2; }\n"
-      "fn main() -> i32 { return pair(left(), right()); }\n");
+      "fn main() { print(pair(left(), right())); }\n");
   const std::size_t leftCall = positionOf(c, "gable_fn_left()");
   const std::size_t rightCall = positionOf(c, "gable_fn_right()");
   GABLE_CHECK(leftCall != std::string::npos);
@@ -118,7 +118,7 @@ GABLE_TEST(codegen_evaluates_binary_operands_left_to_right) {
   const std::string c = emitCFor(
       "fn left() -> i32 { print(\"left\"); return 1; }\n"
       "fn right() -> i32 { print(\"right\"); return 2; }\n"
-      "fn main() -> i32 { return left() / right(); }\n");
+      "fn main() { print(left() / right()); }\n");
   const std::size_t leftCall = positionOf(c, "gable_fn_left()");
   const std::size_t rightCall = positionOf(c, "gable_fn_right()");
   GABLE_CHECK(leftCall != std::string::npos);
@@ -129,7 +129,7 @@ GABLE_TEST(codegen_evaluates_binary_operands_left_to_right) {
 GABLE_TEST(codegen_keeps_short_circuit_evaluation) {
   const std::string c = emitCFor(
       "fn check(a: bool, b: bool) -> bool { return a && b; }\n"
-      "fn main() -> i32 { return 0; }\n");
+      "fn main() -> int { return 0; }\n");
   GABLE_CHECK(contains(c, "(v0_a && v1_b)"));
 }
 
@@ -137,7 +137,7 @@ GABLE_TEST(codegen_sequences_side_effects_inside_short_circuit) {
   const std::string c = emitCFor(
       "fn value() -> i32 { return 1; }\n"
       "fn truth() -> bool { print(\"right\"); return true; }\n"
-      "fn main() -> i32 { let a: i32 = 0;\n"
+      "fn main() -> int { let a: i32 = 0;\n"
       "  if a == 0 && truth() { print(\"body\"); }\n  return 0; }\n");
   // The right operand is guarded by an if statement instead of being evaluated
   // unconditionally.
@@ -148,9 +148,9 @@ GABLE_TEST(codegen_sequences_side_effects_inside_short_circuit) {
 
 GABLE_TEST(codegen_bounds_checks_array_access) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() {\n"
       "  let values: [i32; 3] = [1, 2, 3];\n"
-      "  return values[1];\n"
+      "  print(values[1]);\n"
       "}\n");
   GABLE_CHECK(contains(c, "gable_rt_index_error"));
   GABLE_CHECK(contains(c, ">= 3"));
@@ -162,7 +162,7 @@ GABLE_TEST(codegen_emits_struct_typedefs_in_dependency_order) {
   const std::string c = emitCFor(
       "struct Inner { value: i32 }\n"
       "struct Outer { inner: Inner, items: [i32; 2] }\n"
-      "fn main() -> i32 { let o: Outer = Outer(Inner(1), [2, 3]); return o.inner.value; }\n");
+      "fn main() { let o: Outer = Outer(Inner(1), [2, 3]); print(o.inner.value); }\n");
   const std::size_t inner = positionOf(c, "typedef struct gable_s_Inner");
   const std::size_t outer = positionOf(c, "typedef struct gable_s_Outer");
   const std::size_t array = positionOf(c, "typedef struct gable_arr_");
@@ -175,7 +175,7 @@ GABLE_TEST(codegen_emits_struct_typedefs_in_dependency_order) {
 
 GABLE_TEST(codegen_uses_runtime_struct_for_builtin_results) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  let read = fs_read_text(\"x\");\n"
       "  if read.ok { print(read.text); }\n"
       "  return 0;\n"
@@ -187,7 +187,7 @@ GABLE_TEST(codegen_uses_runtime_struct_for_builtin_results) {
 
 GABLE_TEST(codegen_maps_break_and_continue) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  for i in 0..10 {\n"
       "    if i == 2 { continue; }\n"
       "    if i == 5 { break; }\n"
@@ -202,10 +202,10 @@ GABLE_TEST(codegen_maps_break_and_continue) {
 GABLE_TEST(codegen_evaluates_range_bound_once) {
   const std::string c = emitCFor(
       "fn bound() -> i32 { return 3; }\n"
-      "fn main() -> i32 {\n"
+      "fn main() {\n"
       "  var total: i32 = 0;\n"
       "  for i in 0..bound() { total = total + i; }\n"
-      "  return total;\n"
+      "  print(total);\n"
       "}\n");
   const std::size_t call = positionOf(c, "gable_fn_bound()");
   const std::size_t loop = positionOf(c, "for (;");
@@ -218,7 +218,7 @@ GABLE_TEST(codegen_evaluates_range_bound_once) {
 
 GABLE_TEST(codegen_copies_the_iterated_array) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  let values: [i32; 2] = [1, 2];\n"
       "  for value in values { print(value); }\n"
       "  return 0;\n"
@@ -230,7 +230,7 @@ GABLE_TEST(codegen_copies_the_iterated_array) {
 
 GABLE_TEST(codegen_converts_strings_with_runtime_calls) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  let a: str = \"x\" + \"y\";\n"
       "  let b: bool = a == \"xy\";\n"
       "  print(b);\n"
@@ -242,7 +242,7 @@ GABLE_TEST(codegen_converts_strings_with_runtime_calls) {
 
 GABLE_TEST(codegen_specializes_print_by_operand_type) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  print(\"text\");\n"
       "  print(true);\n"
       "  print(42);\n"
@@ -259,23 +259,22 @@ GABLE_TEST(codegen_compiles_multi_file_programs_into_one_unit) {
   const std::string c = emitCForProject(
       {{"main.gable",
         "import \"util.gable\";\n"
-        "fn main() -> i32 { return helper(); }\n"},
+        "fn main() { print(helper()); }\n"},
        {"util.gable", "fn helper() -> i32 { return 0; }\n"}},
       "main.gable");
   GABLE_CHECK(contains(c, "static int32_t gable_fn_helper(void)"));
-  GABLE_CHECK(contains(c, "static int32_t gable_fn_main(void)"));
+  GABLE_CHECK(contains(c, "static void gable_fn_main(void)"));
   GABLE_CHECK(contains(c, "Generated by the Gable compiler from main.gable"));
 }
 
 GABLE_TEST(codegen_avoids_collisions_with_c_names) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
-      "  let int: i32 = 1;\n"
+      "fn main() {\n"
+      "  let errno: i32 = 1;\n"
       "  let malloc: i32 = 2;\n"
-      "  print(int + malloc);\n"
-      "  return 0;\n"
+      "  print(errno + malloc);\n"
       "}\n");
-  GABLE_CHECK(contains(c, "v0_int"));
+  GABLE_CHECK(contains(c, "v0_errno"));
   GABLE_CHECK(contains(c, "v1_malloc"));
 }
 
@@ -364,7 +363,7 @@ GABLE_TEST(codegen_escapes_hostile_source_names) {
 GABLE_TEST(codegen_mangles_field_names) {
   const std::string c = emitCFor(
       "struct Config { switch: i32, errno: i32, gable_fn_main: i32 }\n"
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  var config: Config = Config(1, 2, 3);\n"
       "  config.errno = 20;\n"
       "  print(config.switch + config.errno + config.gable_fn_main);\n"
@@ -392,7 +391,7 @@ GABLE_TEST(codegen_uses_prelude_field_names_as_declared) {
 
 GABLE_TEST(codegen_creates_and_appends_to_lists) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  var values: [i32] = [];\n"
       "  list_push(values, 7);\n"
       "  print(values.len);\n"
@@ -405,7 +404,7 @@ GABLE_TEST(codegen_creates_and_appends_to_lists) {
 
 GABLE_TEST(codegen_reads_list_elements_through_the_runtime) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  let values: [i32] = [1, 2];\n"
       "  print(values[1]);\n"
       "  return 0;\n"
@@ -419,7 +418,7 @@ GABLE_TEST(codegen_reads_list_elements_through_the_runtime) {
 GABLE_TEST(codegen_writes_through_a_field_of_a_list_element) {
   const std::string c = emitCFor(
       "struct Item { count: i64 }\n"
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  var items: [Item] = [];\n"
       "  items[0].count = 3;\n"
       "  return 0;\n"
@@ -430,7 +429,7 @@ GABLE_TEST(codegen_writes_through_a_field_of_a_list_element) {
 
 GABLE_TEST(codegen_iterates_lists_with_a_snapshot_length) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  var values: [i32] = [1, 2];\n"
       "  for value in values { print(value); }\n"
       "  return 0;\n"
@@ -441,7 +440,7 @@ GABLE_TEST(codegen_iterates_lists_with_a_snapshot_length) {
 
 GABLE_TEST(codegen_calls_the_split_and_join_helpers) {
   const std::string c = emitCFor(
-      "fn main() -> i32 {\n"
+      "fn main() -> int {\n"
       "  let parts = str_split(\"a,b\", \",\");\n"
       "  print(str_join(parts, \"-\"));\n"
       "  return 0;\n"

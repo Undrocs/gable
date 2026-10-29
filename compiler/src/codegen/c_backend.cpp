@@ -610,7 +610,7 @@ class CEmitter {
       case ir::Builtin::ArgCount:
         return sequence(value("gable_rt_arg_count()", false), expr.type, pre);
       case ir::Builtin::Arg:
-        return sequence(value("gable_rt_arg((int32_t)(" + joined() + "))", false), expr.type,
+        return sequence(value("gable_rt_arg((int64_t)(" + joined() + "))", false), expr.type,
                         pre);
       case ir::Builtin::FsReadText:
         return sequence(value("gable_rt_fs_read_text(" + joined() + ")", false), expr.type, pre);
@@ -985,7 +985,13 @@ class CEmitter {
     // value exists, so the collector can find the values that are still in use.
     line("gable_rt_init();");
     line("gable_rt_set_args(argc, argv);");
-    line("return (int)gable_fn_" + sanitize(entry->name) + "();");
+    if (entry->returnType.kind() == ir::TypeKind::Void) {
+      // `fn main()` has no result: the program exits successfully.
+      line("gable_fn_" + sanitize(entry->name) + "();");
+      line("return 0;");
+    } else {
+      line("return (int)gable_fn_" + sanitize(entry->name) + "();");
+    }
     dedent();
     line("}");
   }

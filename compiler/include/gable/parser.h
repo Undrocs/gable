@@ -62,6 +62,11 @@ class Parser {
   std::unique_ptr<ast::Stmt> parseStatement();
   std::unique_ptr<ast::Stmt> parseLetStatement(bool isMutable);
   std::unique_ptr<ast::Stmt> parseReturnStatement();
+  /// True when the current token ends a statement: a line break, ';', the end of
+  /// the enclosing block, or the end of the file.
+  bool atStatementEnd() const;
+  /// Consumes an optional ';' and reports a missing statement end otherwise.
+  void endStatement(const char* context);
   std::unique_ptr<ast::Stmt> parseIfStatement();
   std::unique_ptr<ast::Stmt> parseWhileStatement();
   std::unique_ptr<ast::Stmt> parseForStatement();

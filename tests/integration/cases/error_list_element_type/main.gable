@@ -1,5 +1,4 @@
-fn main() -> i32 {
+fn main() {
     var counts: [i64] = [];
     list_push(counts, "many");
-    return 0;
 }

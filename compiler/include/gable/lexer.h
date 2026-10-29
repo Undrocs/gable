@@ -28,7 +28,9 @@ class Lexer {
   char advance();
   bool match(char expected);
 
-  void skipWhitespaceAndComments();
+  /// Skips whitespace and comments; returns true when a line break was skipped,
+  /// which ends a statement in Gable.
+  bool skipWhitespaceAndComments();
   void scanToken(std::vector<Token>& tokens);
   void scanNumber(std::vector<Token>& tokens);
   void scanIdentifier(std::vector<Token>& tokens);

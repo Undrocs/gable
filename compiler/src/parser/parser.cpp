@@ -14,6 +14,7 @@ bool isTypeKeyword(TokenKind kind) {
     case TokenKind::KwI16:
     case TokenKind::KwI32:
     case TokenKind::KwI64:
+    case TokenKind::KwInt:
     case TokenKind::KwU8:
     case TokenKind::KwU16:
     case TokenKind::KwU32:
@@ -85,6 +86,20 @@ void Parser::error(SourceSpan span, std::string message) {
 
 void Parser::note(SourceSpan span, std::string message) {
   diagnostics_.note(file_, span, std::move(message));
+}
+
+bool Parser::atStatementEnd() const {
+  return check(TokenKind::Semicolon) || check(TokenKind::RBrace) ||
+         check(TokenKind::EndOfFile) || current().newlineBefore;
+}
+
+void Parser::endStatement(const char* context) {
+  if (match(TokenKind::Semicolon) || atStatementEnd()) {
+    return;
+  }
+  error(current().span, std::string("expected a line break after ") + context + ", found " +
+                            tokenKindName(current().kind));
+  note(current().span, "a line break ends a statement; ';' is also accepted");
 }
 
 const Token& Parser::peek(std::size_t lookahead) const {
@@ -176,7 +191,7 @@ void Parser::parseImport(ast::Program& program) {
   if (path.stringValue.empty()) {
     error(path.span, "import path must not be empty");
   }
-  expect(TokenKind::Semicolon, "after import path");
+  endStatement("an import");
   ast::ImportDecl declaration;
   declaration.path = path.stringValue;
   declaration.span = SourceSpan{keyword.span.begin, previousEnd_};
@@ -185,9 +200,15 @@ void Parser::parseImport(ast::Program& program) {
 
 void Parser::synchronize() {
   std::size_t steps = 0;
+  const TokenKind first = current().kind;
   while (!check(TokenKind::EndOfFile) && steps < kMaxSynchronizeSteps) {
     ++steps;
     if (match(TokenKind::Semicolon)) {
+      return;
+    }
+    // Statements end at a line break, so the next line is a good place to start
+    // reporting again instead of skipping the rest of the block.
+    if (steps > 0 && current().kind != first && current().newlineBefore) {
       return;
     }
     if (check(TokenKind::RBrace)) {
@@ -334,9 +355,16 @@ std::unique_ptr<ast::StructDecl> Parser::parseStruct() {
       continue;
     }
     declaration->fields.push_back(std::move(field));
-    if (!match(TokenKind::Comma)) {
-      break;
+    if (match(TokenKind::Comma)) {
+      continue;
     }
+    if (check(TokenKind::RBrace) || check(TokenKind::EndOfFile) || current().newlineBefore) {
+      continue;
+    }
+    error(current().span, std::string("expected ',' or a line break after the field '") +
+                              declaration->fields.back().name + "', found " +
+                              tokenKindName(current().kind));
+    break;
   }
 
   if (check(TokenKind::RBrace)) {
@@ -467,14 +495,14 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
     case TokenKind::KwBreak: {
       const Token& token = advance();
       auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Break, token.span);
-      expect(TokenKind::Semicolon, "after 'break'");
+      endStatement("'break'");
       statement->span = spanFrom(token);
       return statement;
     }
     case TokenKind::KwContinue: {
       const Token& token = advance();
       auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Continue, token.span);
-      expect(TokenKind::Semicolon, "after 'continue'");
+      endStatement("'continue'");
       statement->span = spanFrom(token);
       return statement;
     }
@@ -525,14 +553,14 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
       synchronize();
       return nullptr;
     }
-    expect(TokenKind::Semicolon, "after assignment");
+    endStatement("an assignment");
     statement->span = spanFrom(begin);
     return statement;
   }
 
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::ExprStmt, begin.span);
   statement->value = std::move(expression);
-  expect(TokenKind::Semicolon, "after expression");
+  endStatement("this statement");
   statement->span = spanFrom(begin);
   return statement;
 }
@@ -574,7 +602,7 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
     synchronize();
     return nullptr;
   }
-  expect(TokenKind::Semicolon, "after variable declaration");
+  endStatement("a declaration");
   statement->span = spanFrom(begin);
   return statement;
 }
@@ -582,14 +610,15 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
 std::unique_ptr<ast::Stmt> Parser::parseReturnStatement() {
   const Token& begin = advance();  // 'return'
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Return, begin.span);
-  if (!check(TokenKind::Semicolon)) {
+  // `return` on its own line returns no value; `return 0` returns one.
+  if (!atStatementEnd()) {
     statement->value = parseExpression(0);
     if (!statement->value) {
       synchronize();
       return nullptr;
     }
   }
-  expect(TokenKind::Semicolon, "after return statement");
+  endStatement("a 'return' statement");
   statement->span = spanFrom(begin);
   return statement;
 }

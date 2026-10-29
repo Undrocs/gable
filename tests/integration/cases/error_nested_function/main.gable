@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() -> int {
     fn helper() -> i32 {
         return 1;
     }

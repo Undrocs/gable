@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() -> int {
     let path: str = arg(1);
 
     let written = fs_write_text(path, "line one\nline two\n");

@@ -27,11 +27,10 @@ fn nothing() -> void {
     print("side effect");
 }
 
-fn main() -> i32 {
+fn main() {
     print(factorial(10));
     print(is_even(10));
     print(is_odd(7));
     print(swap_sum(1, 2));
     nothing();
-    return 0;
 }

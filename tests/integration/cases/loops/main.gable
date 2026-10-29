@@ -1,5 +1,5 @@
-fn main() -> i32 {
-    var total: i32 = 0;
+fn main() {
+    var total: int = 0;
     for i in 0..5 {
         total = total + i;
     }
@@ -31,5 +31,4 @@ fn main() -> i32 {
         sum = sum + value;
     }
     print(sum);
-    return 0;
 }

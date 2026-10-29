@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let greeting: str = "hello";
     let name: str = "gable";
     let message: str = greeting + ", " + name;
@@ -25,5 +25,4 @@ fn main() -> i32 {
     if slice.ok { print(slice.text); } else { print("bad slice"); }
     let out_of_range = str_slice(message, 20, 1);
     print(out_of_range.ok);
-    return 0;
 }

@@ -4,6 +4,6 @@ fn pick(flag: bool) -> i32 {
     }
 }
 
-fn main() -> i32 {
+fn main() -> int {
     return pick(true);
 }

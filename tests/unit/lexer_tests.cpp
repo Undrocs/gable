@@ -159,7 +159,7 @@ GABLE_TEST(lexer_reports_unexpected_character) {
 }
 
 GABLE_TEST(lexer_tracks_line_and_column) {
-  const gable::SourceFile source("test.gable", "fn main() -> i32 {\n  return 0;\n}\n");
+  const gable::SourceFile source("test.gable", "fn main() -> int {\n  return 0;\n}\n");
   const gable::LineColumn first = source.lineColumn(0);
   GABLE_CHECK_EQ(std::uint32_t(1), first.line);
   GABLE_CHECK_EQ(std::uint32_t(1), first.column);
@@ -192,7 +192,7 @@ GABLE_TEST(lexer_spans_cover_token_text) {
 
 GABLE_TEST(lexer_diagnostic_caret_points_at_problem) {
   std::string diagnostics;
-  lexAll("fn main() -> i32 {\n    let x = 1 @ 2;\n}\n", diagnostics);
+  lexAll("fn main() -> int {\n    let x = 1 @ 2;\n}\n", diagnostics);
   GABLE_CHECK(diagnostics.find("test.gable:2:15: error:") != std::string::npos);
   GABLE_CHECK(diagnostics.find("^") != std::string::npos);
 }

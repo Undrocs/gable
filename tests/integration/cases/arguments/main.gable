@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     print(arg_count());
     if arg_count() > 1 {
         print(arg(1));
@@ -6,5 +6,4 @@ fn main() -> i32 {
     if arg_count() > 2 {
         print(arg(2));
     }
-    return 0;
 }

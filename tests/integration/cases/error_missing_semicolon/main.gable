@@ -1,4 +1,6 @@
-fn main() -> i32 {
-    let a: i32 = 1
-    return 0;
+// Two statements on one line need a ';' between them; a line break is what
+// normally ends a statement.
+fn main() {
+    let a: i32 = 1 let b: i32 = 2
+    print(a + b)
 }

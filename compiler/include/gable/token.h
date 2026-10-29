@@ -38,6 +38,9 @@ enum class TokenKind {
   KwI16,
   KwI32,
   KwI64,
+  /// `int`, the everyday 64-bit signed integer. It is the same type as `i64`,
+  /// which remains available as the explicit spelling.
+  KwInt,
   KwU8,
   KwU16,
   KwU32,
@@ -93,6 +96,13 @@ struct Token {
   bool unsignedLiteral = false;
   /// Decoded UTF-8 contents for StringLiteral tokens (escapes resolved).
   std::string stringValue;
+  /// True when a line break separates this token from the previous one.
+  ///
+  /// A line break ends a statement (see §7 of the specification), so the parser
+  /// needs to know where one occurred. Recording it here keeps the rule in the
+  /// lexer, which already scans the whitespace, and leaves the parser free of
+  /// line arithmetic.
+  bool newlineBefore = false;
 };
 
 }  // namespace gable

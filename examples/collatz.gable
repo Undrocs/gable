@@ -1,5 +1,5 @@
 // Prints the Collatz trajectory of 27 and its length.
-fn main() -> i32 {
+fn main() {
     var value: i64 = 27;
     var steps: i32 = 0;
     while value != 1 {
@@ -13,5 +13,4 @@ fn main() -> i32 {
     }
     print(1);
     print(steps);
-    return 0;
 }

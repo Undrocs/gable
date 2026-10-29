@@ -1,4 +1,3 @@
-fn main() -> i32 {
+fn main() {
     break;
-    return 0;
 }

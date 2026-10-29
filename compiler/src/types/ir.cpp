@@ -12,7 +12,8 @@ struct ScalarName {
 
 constexpr ScalarName kScalarNames[] = {
     {"i8", TypeKind::I8},   {"i16", TypeKind::I16}, {"i32", TypeKind::I32},
-    {"i64", TypeKind::I64}, {"u8", TypeKind::U8},   {"u16", TypeKind::U16},
+    {"i64", TypeKind::I64}, {"int", TypeKind::I64}, {"u8", TypeKind::U8},
+    {"u16", TypeKind::U16},
     {"u32", TypeKind::U32}, {"u64", TypeKind::U64}, {"bool", TypeKind::Bool},
     {"str", TypeKind::Str}, {"void", TypeKind::Void},
 };
@@ -126,7 +127,7 @@ std::string typeName(Type type, const Module& module) {
     case TypeKind::I8: return "i8";
     case TypeKind::I16: return "i16";
     case TypeKind::I32: return "i32";
-    case TypeKind::I64: return "i64";
+    case TypeKind::I64: return "int";
     case TypeKind::U8: return "u8";
     case TypeKind::U16: return "u16";
     case TypeKind::U32: return "u32";

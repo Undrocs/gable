@@ -15,9 +15,8 @@ fn lcm(a: i64, b: i64) -> i64 {
     return (a / gcd(a, b)) * b;
 }
 
-fn main() -> i32 {
+fn main() {
     print(gcd(1071, 462));
     print(lcm(21, 6));
     print(gcd(270, 192));
-    return 0;
 }

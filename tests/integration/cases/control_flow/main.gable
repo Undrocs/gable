@@ -8,7 +8,7 @@ fn classify(n: i32) -> str {
     return "positive";
 }
 
-fn main() -> i32 {
+fn main() {
     print(classify(-5));
     print(classify(0));
     print(classify(42));
@@ -36,5 +36,4 @@ fn main() -> i32 {
     } else {
         print("never");
     }
-    return 0;
 }

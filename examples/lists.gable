@@ -17,7 +17,7 @@ fn total(scores: [Score]) -> i64 {
     return sum;
 }
 
-fn main() -> i32 {
+fn main() {
     var scores: [Score] = [];
     add(scores, "ada", 12);
     add(scores, "grace", 15);
@@ -41,5 +41,4 @@ fn main() -> i32 {
     // Elements can be replaced by index.
     squares[0] = 100;
     print(squares[0]);
-    return 0;
 }

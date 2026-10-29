@@ -14,7 +14,7 @@ fn count_done(tasks: [Task; 3]) -> i32 {
     return done;
 }
 
-fn main() -> i32 {
+fn main() {
     let tasks: [Task; 3] = [
         Task("write the specification", true),
         Task("add arrays", true),
@@ -33,5 +33,4 @@ fn main() -> i32 {
 
     print(count_done(tasks));
     print(tasks.len);
-    return 0;
 }

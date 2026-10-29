@@ -241,11 +241,13 @@ void SemanticAnalyzer::registerBuiltins() {
   };
 
   const ir::Type str = ir::Type::str();
-  const ir::Type i32 = ir::Type::i32();
+  // Counts, sizes, and indices are `int` everywhere, so a length from `.len`, an
+  // argument index, and a slice bound can be used together without conversions.
+  const ir::Type intType = ir::Type::intType();
 
   builtins_ = {
-      {"arg_count", ir::Builtin::ArgCount, i32, {}},
-      {"arg", ir::Builtin::Arg, str, {i32}},
+      {"arg_count", ir::Builtin::ArgCount, intType, {}},
+      {"arg", ir::Builtin::Arg, str, {intType}},
       {"fs_read_text", ir::Builtin::FsReadText, preludeStruct("FileReadResult"), {str}},
       {"fs_write_text",
        ir::Builtin::FsWriteText,
@@ -263,11 +265,11 @@ void SemanticAnalyzer::registerBuiltins() {
        ir::Builtin::FsUnlock,
        preludeStruct("FileWriteResult"),
        {str}},
-      {"str_of_i64", ir::Builtin::StrOfI64, str, {ir::Type::i64()}},
+      {"str_of_i64", ir::Builtin::StrOfI64, str, {intType}},
       {"str_of_bool", ir::Builtin::StrOfBool, str, {ir::Type::boolean()}},
       {"parse_i64", ir::Builtin::ParseI64, preludeStruct("ParseResult"), {str}},
       {"str_find", ir::Builtin::Find, preludeStruct("FindResult"), {str, str}},
-      {"str_slice", ir::Builtin::Slice, preludeStruct("SliceResult"), {str, i32, i32}},
+      {"str_slice", ir::Builtin::Slice, preludeStruct("SliceResult"), {str, intType, intType}},
       {"str_trim", ir::Builtin::Trim, str, {str}},
       // Splitting and joining are what makes a list of strings useful: reading
       // input into fields, and building output without repeated concatenation.
@@ -289,7 +291,8 @@ void SemanticAnalyzer::checkEntryPoint() {
   const auto it = functions_.find("main");
   if (it == functions_.end()) {
     diagnostics_.error(0, SourceSpan{},
-                       "no 'main' function found; an executable requires 'fn main() -> i32'");
+                       "no 'main' function found; an executable requires 'fn main()' or "
+                       "'fn main() -> int'");
     return;
   }
   const ast::FunctionDecl& declaration = *it->second.declaration;
@@ -298,12 +301,16 @@ void SemanticAnalyzer::checkEntryPoint() {
                        "'main' must not take parameters; use arg_count() and arg(i) to read the "
                        "command line");
   }
-  if (it->second.returnType != ir::Type::i32()) {
+  if (it->second.returnType != ir::Type::intType() &&
+      it->second.returnType != ir::Type::voidType()) {
     diagnostics_.error(declaration.file,
                        declaration.hasReturnType ? declaration.returnType.span
                                                  : declaration.nameSpan,
-                       "'main' must return i32, found '" +
+                       "'main' must return 'int' (the exit status) or nothing at all, found '" +
                            ir::typeName(it->second.returnType, *module_) + "'");
+    diagnostics_.note(declaration.file, declaration.nameSpan,
+                      "write 'fn main()' to exit with status 0, or 'fn main() -> int' to "
+                      "return a status");
   }
 }
 
@@ -897,7 +904,7 @@ ir::ExprPtr SemanticAnalyzer::checkIntegerLiteral(const ast::Expr& expr,
     return checkUnary(expr, expected);
   }
 
-  ir::Type type = ir::Type::i32();
+  ir::Type type = ir::Type::intType();
   if (expected) {
     if (expected->kind() != ir::TypeKind::Error && expected->isInteger()) {
       type = *expected;
@@ -918,7 +925,7 @@ ir::ExprPtr SemanticAnalyzer::checkUnary(const ast::Expr& expr, std::optional<ir
   // A negated literal is folded so that the minimum value of a signed type is
   // representable and range checked against the expected type.
   if (const std::optional<LiteralInfo> literal = asIntegerLiteral(expr)) {
-    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::i32();
+    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::intType();
     return literalAs(expr, *literal, type);
   }
 
@@ -969,7 +976,7 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
   ir::Type operandType = ir::Type::error();
 
   if (lhsLiteral && rhsLiteral) {
-    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::i32();
+    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::intType();
     lhs = literalAs(*expr.lhs, *lhsLiteral, type);
     rhs = literalAs(*expr.rhs, *rhsLiteral, type);
     operandType = type;

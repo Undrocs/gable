@@ -1,15 +1,13 @@
 // Command-line arguments: arg_count() includes the program name at index 0.
-fn main() -> i32 {
+fn main() {
     print(arg_count());
     if arg_count() < 2 {
         print("no names given; run with: gable run args.gable -- Ada Grace");
-        return 0;
     }
 
-    var index: i32 = 1;
+    var index: int = 1;
     while index < arg_count() {
         print("hello, " + arg(index));
         index = index + 1;
     }
-    return 0;
 }

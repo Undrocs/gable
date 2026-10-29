@@ -1,1 +1,1 @@
-'main' must return i32, found 'i64'
+'main' must return 'int' (the exit status) or nothing at all, found 'bool'

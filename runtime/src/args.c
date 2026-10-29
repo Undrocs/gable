@@ -77,16 +77,16 @@ void gable_rt_set_args(int argc, char **argv) {
 #endif
 }
 
-int32_t gable_rt_arg_count(void) { return (int32_t)g_argc; }
+int64_t gable_rt_arg_count(void) { return (int64_t)g_argc; }
 
-gable_str gable_rt_arg(int32_t index) {
+gable_str gable_rt_arg(int64_t index) {
   gable_str value;
   value.data = "";
   value.len = 0;
-  if (g_argv == NULL || index < 0 || index >= g_argc) {
+  if (g_argv == NULL || index < 0 || index >= (int64_t)g_argc) {
     return value;
   }
-  const char *argument = g_argv[index];
+  const char *argument = g_argv[(int)index];
   if (argument == NULL) {
     return value;
   }

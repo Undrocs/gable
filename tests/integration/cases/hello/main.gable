@@ -2,9 +2,8 @@ fn add(a: i64, b: i64) -> i64 {
     return a + b;
 }
 
-fn main() -> i32 {
+fn main() {
     print("Hello from Gable!");
     let result: i64 = add(20, 22);
     print(result);
-    return 0;
 }

@@ -2,7 +2,7 @@
 // appear in a filesystem path: the operating system would stop reading the name
 // at the NUL, so `victim.txt\0suffix` would name `victim.txt`. Every prefix of a
 // path that contains one must be rejected, and nothing may be written.
-fn main() -> i32 {
+fn main() -> int {
     let fixture = arg(1);
     let contents = fs_read_text(fixture);
     if !contents.ok {
@@ -16,7 +16,7 @@ fn main() -> i32 {
     var rejected: i32 = 0;
     var invalid_code: i32 = 0;
     while index <= contents.text.len {
-        let prefix = str_slice(contents.text, 0, index as i32);
+        let prefix = str_slice(contents.text, 0, index as int);
         if !prefix.ok {
             print("slice failed");
             return 1;
@@ -40,7 +40,7 @@ fn main() -> i32 {
 
     // Writing through such a path must fail the same way, and must not create or
     // modify any file.
-    let full = str_slice(contents.text, 0, contents.text.len as i32);
+    let full = str_slice(contents.text, 0, contents.text.len as int);
     if full.ok {
         let written = fs_write_text(full.text, "attack");
         print(written.ok);

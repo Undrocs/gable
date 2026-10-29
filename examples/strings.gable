@@ -3,7 +3,7 @@ fn describe(text: str) -> str {
     return "'" + text + "' has " + str_of_i64(text.len) + " bytes";
 }
 
-fn main() -> i32 {
+fn main() {
     let greeting: str = "hello";
     let name: str = "gable";
     let message: str = greeting + ", " + name;
@@ -22,10 +22,9 @@ fn main() -> i32 {
 
     let found = str_find(message, "gable");
     if found.ok {
-        let slice = str_slice(message, found.index as i32, 5);
+        let slice = str_slice(message, found.index as int, 5);
         if slice.ok {
             print(slice.text);
         }
     }
-    return 0;
 }

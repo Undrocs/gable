@@ -2,7 +2,7 @@
 // iteration builds a 4 KiB block, adds its length, and drops it. Used by
 // tools/check-memory.sh to show that memory stays bounded.
 
-fn repeat(text: str, doublings: i32) -> str {
+fn repeat(text: str, doublings: int) -> str {
     var result = text;
     for i in 0..doublings {
         result = result + result;
@@ -10,14 +10,14 @@ fn repeat(text: str, doublings: i32) -> str {
     return result;
 }
 
-fn main() -> i32 {
+fn main() -> int {
     let parsed = parse_i64(arg(1));
     if !parsed.ok {
         eprint("usage: temporaries <iterations>");
         return 2;
     }
-    let iterations = parsed.value as i32;
-    var total: i64 = 0;
+    let iterations = parsed.value;
+    var total: int = 0;
     for i in 0..iterations {
         let block = repeat("abcdefgh", 9);
         total = total + block.len;
