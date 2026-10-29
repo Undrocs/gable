@@ -70,7 +70,7 @@ fn without_task(tasks: [Task], target: int) -> [Task] {
     var index: int = 1;
     for task in tasks {
         if index != target {
-            list_push(kept, task);
+            kept.push(task)
         }
         index = index + 1;
     }
@@ -113,7 +113,7 @@ fn run_mutation(path: str, command: str, argument: str) -> int {
             eprint("notes: the notes file is too large for this tool");
             return 2;
         }
-        list_push(tasks, Task(false, argument));
+        tasks.push(Task(false, argument))
         let error = save_notes(path, tasks);
         if error.len > 0 {
             report_storage_error("cannot write the notes file", error);
@@ -188,7 +188,7 @@ fn main() -> int {
         return 1;
     }
     if argument.len > 0 {
-        argument = str_trim(argument);
+        argument = argument.trim();
     }
 
     if command == "list" {

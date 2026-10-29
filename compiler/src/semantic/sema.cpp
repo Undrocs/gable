@@ -33,6 +33,17 @@ std::uint64_t literalBits(std::uint64_t magnitude, bool negate) {
 
 bool isPrintName(const std::string& name) { return name == "print" || name == "eprint"; }
 
+/// The built-in function that a method name stands for. The receiver becomes its
+/// first argument, so the two spellings cannot drift apart.
+std::string_view methodToBuiltin(const std::string& method) {
+  if (method == "trim") return "str_trim";
+  if (method == "split") return "str_split";
+  if (method == "slice") return "str_slice";
+  if (method == "find") return "str_find";
+  if (method == "join") return "str_join";
+  return {};
+}
+
 /// Depth-first search over struct fields looking for a value-containment cycle.
 bool containsItself(ir::Type type, const ir::Module& module, std::vector<bool>& onPath,
                     std::vector<bool>& done) {
@@ -832,6 +843,8 @@ ir::ExprPtr SemanticAnalyzer::checkExpr(const ast::Expr& expr, std::optional<ir:
       return checkBinary(expr, expected);
     case ast::Expr::Kind::Call:
       return checkCall(expr);
+    case ast::Expr::Kind::MethodCall:
+      return checkMethodCall(expr);
     case ast::Expr::Kind::FieldAccess:
       return checkFieldAccess(expr);
     case ast::Expr::Kind::Index:
@@ -1438,6 +1451,129 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
     lowered->arguments.push_back(conformTo(*element, elementType, "array element"));
   }
   return lowered;
+}
+
+ir::ExprPtr SemanticAnalyzer::checkMethodCall(const ast::Expr& expr) {
+  ir::ExprPtr receiver = checkExpr(*expr.lhs, std::nullopt);
+  const ir::Type receiverType = receiver->type;
+
+  auto failed = [&]() {
+    return std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::error(), expr.span);
+  };
+
+  // `values.push(x)` is the list operation written with the list first, which is
+  // how every other list and string operation is written as well.
+  if (expr.name == "push") {
+    if (receiverType.kind() == ir::TypeKind::Error) {
+      for (const auto& argument : expr.arguments) {
+        checkExpr(*argument, std::nullopt);
+      }
+      return failed();
+    }
+    if (receiverType.kind() != ir::TypeKind::List) {
+      reportUnknownMethod(expr, receiverType);
+      for (const auto& argument : expr.arguments) {
+        checkExpr(*argument, std::nullopt);
+      }
+      return failed();
+    }
+    if (expr.arguments.size() != 1) {
+      diagnostics_.error(currentFile_, expr.span,
+                         "'push' adds one value, found " +
+                             std::to_string(expr.arguments.size()) + " arguments");
+      for (const auto& argument : expr.arguments) {
+        checkExpr(*argument, std::nullopt);
+      }
+      return failed();
+    }
+    auto lowered =
+        std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::voidType(), expr.span);
+    lowered->builtin = ir::Builtin::ListPush;
+    lowered->name = "list_push";
+    lowered->arguments.push_back(std::move(receiver));
+    const ir::Type elementType = module_->types.listElement(receiverType);
+    lowered->arguments.push_back(conformTo(*expr.arguments[0], elementType, "list element"));
+    return lowered;
+  }
+
+  // Every other method is a built-in whose first parameter is the receiver.
+  const std::string_view freeFunction = methodToBuiltin(expr.name);
+  if (freeFunction.empty()) {
+    reportUnknownMethod(expr, receiverType);
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return failed();
+  }
+  const BuiltinInfo* builtin = findBuiltin(freeFunction);
+  if (builtin == nullptr || builtin->parameterTypes.empty()) {
+    return failed();
+  }
+  if (receiverType.kind() == ir::TypeKind::Error) {
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return failed();
+  }
+  if (receiverType != builtin->parameterTypes[0]) {
+    diagnostics_.error(currentFile_, expr.fieldSpan,
+                       "'" + expr.name + "' needs a value of type '" +
+                           ir::typeName(builtin->parameterTypes[0], *module_) + "', found '" +
+                           ir::typeName(receiverType, *module_) + "'");
+    noteAvailableMethods(expr.fieldSpan, receiverType);
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return failed();
+  }
+
+  auto lowered = std::make_unique<ir::Expr>(ir::Expr::Kind::Call, builtin->returnType, expr.span);
+  lowered->builtin = builtin->id;
+  lowered->name = std::string(builtin->name);
+  lowered->arguments.push_back(std::move(receiver));
+
+  const std::size_t expected = builtin->parameterTypes.size() - 1;
+  if (expr.arguments.size() != expected) {
+    diagnostics_.error(currentFile_, expr.span,
+                       "'" + expr.name + "' expects " + std::to_string(expected) +
+                           " argument(s) besides the value it is called on, found " +
+                           std::to_string(expr.arguments.size()));
+  }
+  const std::size_t checked = std::min(expr.arguments.size(), expected);
+  for (std::size_t i = 0; i < checked; ++i) {
+    lowered->arguments.push_back(
+        conformTo(*expr.arguments[i], builtin->parameterTypes[i + 1], "argument"));
+  }
+  for (std::size_t i = checked; i < expr.arguments.size(); ++i) {
+    checkExpr(*expr.arguments[i], std::nullopt);
+  }
+  return lowered;
+}
+
+void SemanticAnalyzer::reportUnknownMethod(const ast::Expr& expr, ir::Type receiverType) {
+  diagnostics_.error(currentFile_, expr.fieldSpan,
+                     "'" + ir::typeName(receiverType, *module_) + "' has no method '" +
+                         expr.name + "'");
+  noteAvailableMethods(expr.fieldSpan, receiverType);
+}
+
+void SemanticAnalyzer::noteAvailableMethods(SourceSpan span, ir::Type receiverType) {
+  if (receiverType.kind() == ir::TypeKind::Str) {
+    diagnostics_.note(currentFile_, span,
+                      "a str supports '.len', '.trim()', '.split(separator)', '.slice(start, "
+                      "length)', and '.find(needle)'");
+    return;
+  }
+  if (receiverType.kind() == ir::TypeKind::List) {
+    diagnostics_.note(currentFile_, span,
+                      "a list supports '.len', '.push(value)', indexing, and 'for item in list'");
+    return;
+  }
+  if (receiverType.kind() == ir::TypeKind::Array) {
+    diagnostics_.note(currentFile_, span,
+                      "an array supports '.len', indexing, and 'for item in array'; use a list "
+                      "('[T]') when it has to grow");
+  }
 }
 
 ir::ExprPtr SemanticAnalyzer::checkInterpolatedString(const ast::Expr& expr) {

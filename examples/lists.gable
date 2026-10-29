@@ -6,7 +6,7 @@ struct Score {
 }
 
 fn add(scores: [Score], name: str, points: i64) -> void {
-    list_push(scores, Score(name, points));
+    scores.push(Score(name, points))
 }
 
 fn total(scores: [Score]) -> i64 {
@@ -33,7 +33,7 @@ fn main() {
     // A list grows as needed; nothing has to be sized up front.
     var squares: [i64] = [];
     for i in 0..10 {
-        list_push(squares, (i as i64) * (i as i64));
+        squares.push(i * i)
     }
     print(squares.len);
     print(squares[9]);

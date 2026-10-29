@@ -13,7 +13,7 @@ struct StoredTask {
 /// Parses one stored line. Anything that does not have exactly the shape the
 /// file format describes is reported as invalid instead of being guessed at.
 fn parse_stored(line: str) -> StoredTask {
-    let fields = str_split(line, "\t");
+    let fields = line.split("\t")
     if fields.len != 2 {
         return StoredTask(false, false, "");
     }
@@ -36,10 +36,10 @@ fn is_valid_title(title: str) -> bool {
     if title.len == 0 {
         return false;
     }
-    if str_find(title, "\t").ok {
+    if title.find("\t").ok {
         return false;
     }
-    if str_find(title, "\n").ok {
+    if title.find("\n").ok {
         return false;
     }
     return true;

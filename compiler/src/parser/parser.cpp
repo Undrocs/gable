@@ -1045,6 +1045,47 @@ ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
       }
       baseDepth += 1;
       expressionDepth_ = baseDepth;
+      // `text.trim()` is a call on the value, so the parenthesis turns the field
+      // access into a method call whose receiver is what came before the '.'.
+      // Field access without a call stays a read.
+      if (check(TokenKind::LParen)) {
+        advance();
+        const std::size_t receiverBegin = base->span.begin;
+        auto call = std::make_unique<ast::Expr>(ast::Expr::Kind::MethodCall, field.span);
+        call->name = field.text;
+        call->fieldSpan = field.span;
+        call->lhs = std::move(base);
+        int argumentDepth = 0;
+        if (!check(TokenKind::RParen)) {
+          for (;;) {
+            ast::ExprPtr argument = parseExpression(0);
+            if (!argument) {
+              return nullptr;
+            }
+            argumentDepth = std::max(argumentDepth, expressionDepth_);
+            call->arguments.push_back(std::move(argument));
+            if (match(TokenKind::Comma)) {
+              continue;
+            }
+            break;
+          }
+        }
+        if (!check(TokenKind::RParen)) {
+          error(current().span,
+                "expected ')' to close the argument list of '." + field.text + "()'");
+          return nullptr;
+        }
+        const Token& close = advance();
+        call->span = SourceSpan{receiverBegin, close.span.end};
+        if (!growTreeDepth(std::max(baseDepth, argumentDepth) + 1, field.span)) {
+          return nullptr;
+        }
+        baseDepth = std::max(baseDepth, argumentDepth) + 1;
+        expressionDepth_ = baseDepth;
+        base = std::move(call);
+        continue;
+      }
+
       auto access = std::make_unique<ast::Expr>(ast::Expr::Kind::FieldAccess, field.span);
       access->span = SourceSpan{base->span.begin, field.span.end};
       access->fieldName = field.text;

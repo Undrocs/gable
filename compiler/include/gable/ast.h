@@ -48,6 +48,10 @@ struct Expr {
     Unary,
     Binary,
     Call,
+    /// `values.push(x)`: a call whose receiver is the first argument of the
+    /// built-in operation it names (`.push`, `.trim`, `.split`, ...). `lhs` is
+    /// the receiver, `name` the method, and `arguments` what follows it.
+    MethodCall,
     FieldAccess,
     Index,
     Cast,

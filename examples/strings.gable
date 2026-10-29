@@ -11,7 +11,7 @@ fn main() {
     print(message);
     print(describe(message));
     print(message == "hello, gable");
-    print(str_trim("  padded  "));
+    print("  padded  ".trim())
 
     let parsed = parse_i64("-1234");
     if parsed.ok {
@@ -20,9 +20,9 @@ fn main() {
         print("not a number");
     }
 
-    let found = str_find(message, "gable");
+    let found = message.find("gable")
     if found.ok {
-        let slice = str_slice(message, found.index as int, 5);
+        let slice = message.slice(found.index, 5)
         if slice.ok {
             print(slice.text);
         }

@@ -5,7 +5,7 @@
 // the format unambiguous without an escaping mechanism.
 //
 // The whole file is parsed into a list of tasks before a command runs, and a
-// command writes the list back with str_join. Reading and writing are one pass
+// command writes the list back with '.join'. Reading and writing are one pass
 // over the tasks; nothing is copied per line.
 
 import "text.gable";
@@ -35,7 +35,7 @@ fn file_code_busy() -> int {
 /// of producing an empty task, and an empty file has no tasks.
 fn parse_content(content: str) -> LoadResult {
     var tasks: [Task] = [];
-    for line in str_split(content, "\n") {
+    for line in content.split("\n") {
         if line.len == 0 {
             continue;
         }
@@ -43,7 +43,7 @@ fn parse_content(content: str) -> LoadResult {
         if !stored.valid {
             return LoadResult(false, tasks, "it contains a line that is not a task");
         }
-        list_push(tasks, Task(stored.done, stored.title));
+        tasks.push(Task(stored.done, stored.title))
     }
     return LoadResult(true, tasks, "");
 }
@@ -75,12 +75,12 @@ fn render_stored(task: Task) -> str {
 fn render_content(tasks: [Task]) -> str {
     var lines: [str] = [];
     for task in tasks {
-        list_push(lines, render_stored(task));
+        lines.push(render_stored(task))
     }
     if lines.len == 0 {
         return "";
     }
-    return str_join(lines, "\n") + "\n";
+    return lines.join("\n") + "\n"
 }
 
 /// Saves the notes file through a temporary file that replaces the old one in a

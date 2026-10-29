@@ -819,6 +819,37 @@ GABLE_TEST(sema_checks_the_element_type_of_list_push) {
   GABLE_CHECK(mentions(analysis, "expected 'int', found 'str'"));
 }
 
+GABLE_TEST(sema_accepts_receiver_calls) {
+  const auto analysis = analyze(inMain(
+      "  var names: [str] = [];\n"
+      "  names.push(\"ada\");\n"
+      "  print(names.len);\n"
+      "  print(\"  padded  \".trim());\n"
+      "  print(\"a,b\".split(\",\").join(\"-\"));\n"
+      "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_reports_an_unknown_method) {
+  const auto analysis = analyze(inMain("  let count: int = 1;\n  print(count.trim());\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  // The method exists, so the message can name the type it needs instead of
+  // saying only that the call is wrong.
+  GABLE_CHECK(mentions(analysis, "'trim' needs a value of type 'str', found 'int'"));
+}
+
+GABLE_TEST(sema_reports_a_wrong_receiver_type) {
+  const auto analysis = analyze(inMain("  print(\"text\".join(\",\"));\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "'join' needs a value of type '[str]', found 'str'"));
+}
+
+GABLE_TEST(sema_reports_push_on_a_non_list) {
+  const auto analysis = analyze(inMain("  let text: str = \"a\";\n  text.push(\"b\");\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "'str' has no method 'push'"));
+}
+
 GABLE_TEST(sema_lowers_string_interpolation) {
   const auto analysis = analyze(inMain(
       "  let count: int = 2;\n"

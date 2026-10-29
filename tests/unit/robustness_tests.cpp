@@ -162,6 +162,13 @@ GABLE_TEST(robustness_handles_unterminated_constructs) {
   analyzeWithoutCrashing("fn main() -> int { let x: i32 = 1 + ");
 }
 
+GABLE_TEST(robustness_handles_malformed_method_calls) {
+  analyzeWithoutCrashing("fn main() { let a: int = 1; a.push(2, 3, 4); }");
+  analyzeWithoutCrashing("fn main() { let a: int = 1; a.trim(); }");
+  analyzeWithoutCrashing("fn main() { let a: int = 1; a.b.c(); }");
+  analyzeWithoutCrashing("fn main() { let a: str = \"x\"; a.slice(,2); }");
+}
+
 GABLE_TEST(robustness_handles_malformed_interpolation) {
   analyzeWithoutCrashing("fn main() { print(\"$\"); }");
   analyzeWithoutCrashing("fn main() { print(\"${}\") ; }");

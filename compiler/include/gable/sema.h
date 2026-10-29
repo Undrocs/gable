@@ -97,6 +97,11 @@ class SemanticAnalyzer {
   /// `"a $b c"` becomes string concatenation, converting integers and booleans
   /// to text with the same built-ins a program would call itself.
   ir::ExprPtr checkInterpolatedString(const ast::Expr& expr);
+  /// `values.push(x)`, `text.trim()`: the built-in operation with the receiver as
+  /// its first argument.
+  ir::ExprPtr checkMethodCall(const ast::Expr& expr);
+  void reportUnknownMethod(const ast::Expr& expr, ir::Type receiverType);
+  void noteAvailableMethods(SourceSpan span, ir::Type receiverType);
   ir::ExprPtr checkIntegerLiteral(const ast::Expr& expr, std::optional<ir::Type> expected);
 
   /// Resolves an assignment target and reports expressions that are not
