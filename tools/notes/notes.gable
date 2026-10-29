@@ -8,220 +8,215 @@
 //
 // Exit status: 0 success, 1 usage error, 2 storage error, 3 no such task.
 
-import "storage.gable";
+import "storage.gable"
 
 /// More tasks than this is treated as a file this tool should not rewrite.
 fn max_tasks() -> int {
-    return 100000;
+    return 100000
 }
 
-fn print_usage() -> void {
-    eprint("usage: notes [--file <path>] <command> [arguments]");
-    eprint("");
-    eprint("commands:");
-    eprint("  add <title...>   add a pending task");
-    eprint("  list             show every task");
-    eprint("  done <number>    mark a task as done");
-    eprint("  remove <number>  delete a task");
-    eprint("  clear            delete every task");
-    eprint("");
-    eprint("The file defaults to notes.txt in the current directory.");
-    return;
+fn print_usage() {
+    eprint("usage: notes [--file <path>] <command> [arguments]")
+    eprint("")
+    eprint("commands:")
+    eprint("  add <title...>   add a pending task")
+    eprint("  list             show every task")
+    eprint("  done <number>    mark a task as done")
+    eprint("  remove <number>  delete a task")
+    eprint("  clear            delete every task")
+    eprint("")
+    eprint("The file defaults to notes.txt in the current directory.")
 }
 
-fn report_storage_error(prefix: str, error: str) -> void {
-    eprint(prefix + ": " + error);
-    return;
+fn report_storage_error(prefix: str, error: str) {
+    eprint("$prefix: $error")
 }
 
+/// A task number, or 0 when the argument is not a number this tool accepts.
 fn parse_number(text: str) -> int {
-    let parsed = parse_i64(text);
-    if !parsed.ok {
-        return 0;
+    let parsed = parse_i64(text) else {
+        return 0
     }
     if parsed.value < 1 || parsed.value > 1000000 {
-        return 0;
+        return 0
     }
-    return parsed.value;
+    return parsed.value
 }
 
 fn list_tasks(tasks: [Task]) -> int {
     if tasks.len == 0 {
-        print("no tasks");
-        return 0;
+        print("no tasks")
+        return 0
     }
-    var index: int = 1;
+    var index = 1
     for task in tasks {
-        print(render_line(index, task));
-        index = index + 1;
+        print(render_line(index, task))
+        index = index + 1
     }
-    return 0;
+    return 0
 }
 
-/// Returns `tasks` with the task at one-based `target` marked done.
-fn mark_done(tasks: [Task], target: int) -> void {
-    tasks[target - 1].done = true;
-    return;
+/// Marks the task at one-based `target` done.
+fn mark_done(tasks: [Task], target: int) {
+    tasks[target - 1].done = true
 }
 
 /// Returns `tasks` without the task at one-based `target`.
 fn without_task(tasks: [Task], target: int) -> [Task] {
-    var kept: [Task] = [];
-    var index: int = 1;
+    let kept: [Task] = []
+    var index = 1
     for task in tasks {
         if index != target {
             kept.push(task)
         }
-        index = index + 1;
+        index = index + 1
     }
-    return kept;
+    return kept
 }
 
 /// Performs one mutating command while the lock is held and returns the exit
 /// status. The caller releases the lock.
 fn run_mutation(path: str, command: str, argument: str) -> int {
     if command == "add" && !is_valid_title(argument) {
-        eprint("notes: a task title must not be empty or contain tabs or line breaks");
-        return 1;
+        eprint("notes: a task title must not be empty or contain tabs or line breaks")
+        return 1
     }
     if command == "done" || command == "remove" {
         if parse_number(argument) == 0 {
-            eprint("notes: " + command + " requires a task number from 1 to 1000000");
-            return 1;
+            eprint("notes: $command requires a task number from 1 to 1000000")
+            return 1
         }
     }
 
-    let loaded = load_notes(path);
-    if !loaded.ok {
-        report_storage_error("cannot read the notes file", loaded.error);
-        return 2;
+    let loaded = load_notes(path) else {
+        report_storage_error("cannot read the notes file", loaded.error)
+        return 2
     }
 
     if command == "clear" {
-        let error = save_notes(path, []);
+        let error = save_notes(path, [])
         if error.len > 0 {
-            report_storage_error("cannot write the notes file", error);
-            return 2;
+            report_storage_error("cannot write the notes file", error)
+            return 2
         }
-        print("cleared");
-        return 0;
+        print("cleared")
+        return 0
     }
 
-    var tasks: [Task] = loaded.tasks;
+    var tasks = loaded.tasks
     if command == "add" {
         if tasks.len >= max_tasks() {
-            eprint("notes: the notes file is too large for this tool");
-            return 2;
+            eprint("notes: the notes file is too large for this tool")
+            return 2
         }
         tasks.push(Task(false, argument))
-        let error = save_notes(path, tasks);
+        let error = save_notes(path, tasks)
         if error.len > 0 {
-            report_storage_error("cannot write the notes file", error);
-            return 2;
+            report_storage_error("cannot write the notes file", error)
+            return 2
         }
-        print("added: " + argument);
-        return 0;
+        print("added: $argument")
+        return 0
     }
 
     // Both remaining commands name a task by its one-based position.
-    let target = parse_number(argument);
+    let target = parse_number(argument)
     if target > tasks.len {
-        eprint("notes: no task numbered " + str_of_i64(target));
-        return 3;
+        eprint("notes: no task numbered $target")
+        return 3
     }
     if command == "done" {
-        mark_done(tasks, target);
+        mark_done(tasks, target)
     } else {
-        tasks = without_task(tasks, target);
+        tasks = without_task(tasks, target)
     }
-    let error = save_notes(path, tasks);
+    let error = save_notes(path, tasks)
     if error.len > 0 {
-        report_storage_error("cannot write the notes file", error);
-        return 2;
+        report_storage_error("cannot write the notes file", error)
+        return 2
     }
-    return 0;
+    return 0
 }
 
 fn main() -> int {
-    var path: str = "notes.txt";
-    var command: str = "";
-    var argument: str = "";
-    var index: int = 1;
-    var options_ended: bool = false;
+    var path = "notes.txt"
+    var command = ""
+    var argument = ""
+    var index = 1
+    var options_ended = false
 
     while index < arg_count() {
-        let current: str = arg(index);
-        index = index + 1;
+        let current = arg(index)
+        index = index + 1
 
         if !options_ended && current == "--" {
-            options_ended = true;
-            continue;
+            options_ended = true
+            continue
         }
         if !options_ended && current == "--file" {
             if index >= arg_count() {
-                eprint("notes: --file requires a path");
-                return 1;
+                eprint("notes: --file requires a path")
+                return 1
             }
-            path = arg(index);
-            index = index + 1;
-            continue;
+            path = arg(index)
+            index = index + 1
+            continue
         }
         if !options_ended && current == "--help" {
-            print_usage();
-            return 0;
+            print_usage()
+            return 0
         }
         if command.len == 0 {
-            command = current;
-            continue;
+            command = current
+            continue
         }
         // Remaining arguments form the title, so `add buy milk` works without
         // quoting every word.
         if argument.len == 0 {
-            argument = current;
+            argument = current
         } else {
-            argument = argument + " " + current;
+            argument = argument + " " + current
         }
     }
 
     if command.len == 0 {
-        print_usage();
-        return 1;
+        print_usage()
+        return 1
     }
     if argument.len > 0 {
-        argument = argument.trim();
+        argument = argument.trim()
     }
 
     if command == "list" {
         // Listing only reads, and the file is replaced atomically, so a reader
         // never sees a partial write and needs no lock.
-        let loaded = load_notes(path);
-        if !loaded.ok {
-            report_storage_error("cannot read the notes file", loaded.error);
-            return 2;
+        let loaded = load_notes(path) else {
+            report_storage_error("cannot read the notes file", loaded.error)
+            return 2
         }
-        return list_tasks(loaded.tasks);
+        return list_tasks(loaded.tasks)
     }
 
     if command != "add" && command != "done" && command != "remove" && command != "clear" {
-        eprint("notes: unknown command '" + command + "'");
-        print_usage();
-        return 1;
+        eprint("notes: unknown command '$command'")
+        print_usage()
+        return 1
     }
 
     // Every mutating command is a read-modify-write sequence. The lock keeps two
     // commands from reading the same file and then overwriting each other's work,
     // and the atomic save keeps an interrupted write from damaging the file.
-    let lockError = lock_notes(path);
-    if lockError.len > 0 {
-        report_storage_error("cannot lock the notes file", lockError);
-        return 2;
+    let lock_error = lock_notes(path)
+    if lock_error.len > 0 {
+        report_storage_error("cannot lock the notes file", lock_error)
+        return 2
     }
 
-    let status = run_mutation(path, command, argument);
-    let unlockError = unlock_notes(path);
-    if unlockError.len > 0 {
-        report_storage_error("cannot release the lock on the notes file", unlockError);
-        return 2;
+    let status = run_mutation(path, command, argument)
+    let unlock_error = unlock_notes(path)
+    if unlock_error.len > 0 {
+        report_storage_error("cannot release the lock on the notes file", unlock_error)
+        return 2
     }
-    return status;
+    return status
 }
