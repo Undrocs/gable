@@ -602,7 +602,20 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
     synchronize();
     return nullptr;
   }
-  endStatement("a declaration");
+  // `let text = fs_read_text(path) else { ... }` handles failure where the value
+  // is bound, instead of three lines later.
+  if (check(TokenKind::KwElse)) {
+    statement->elseSpan = advance().span;
+    if (!check(TokenKind::LBrace)) {
+      error(current().span, "expected '{' after 'else'; Gable requires braced bodies");
+      synchronize();
+      return nullptr;
+    }
+    statement->hasElse = true;
+    statement->elseBody = parseBlock();
+  } else {
+    endStatement("a declaration");
+  }
   statement->span = spanFrom(begin);
   return statement;
 }

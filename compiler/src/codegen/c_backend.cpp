@@ -763,7 +763,17 @@ class CEmitter {
           initializer = emitExpr(*statement.value, pre).code;
         }
         flush(pre);
-        line(cType(statement.type) + " " + slotName(statement.slot) + " = " + initializer + ";");
+        const std::string slot = slotName(statement.slot);
+        line(cType(statement.type) + " " + slot + " = " + initializer + ";");
+        if (statement.hasElse) {
+          // The value is bound before it is checked, so the failure block can read
+          // `error`; it always leaves the function or the loop.
+          line("if (!(" + slot + "." + fieldCName(statement.type, "ok") + ")) {");
+          indent();
+          emitStatements(statement.elseBody);
+          dedent();
+          line("}");
+        }
         return;
       }
       case ir::Stmt::Kind::Assign: {

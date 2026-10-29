@@ -137,6 +137,9 @@ class SemanticAnalyzer {
   std::string fieldListForHint(const ir::StructInfo& info) const;
   std::string nameOfSlot(std::uint32_t slot) const;
   bool alwaysReturns(const std::vector<ir::StmtPtr>& statements) const;
+  /// True when the statements leave the function or the loop on every path, which
+  /// is what the `else` block of a fallible binding has to do.
+  bool alwaysDiverges(const std::vector<ir::StmtPtr>& statements) const;
   bool stmtAlwaysReturns(const ir::Stmt& stmt) const;
 
   Diagnostics& diagnostics_;

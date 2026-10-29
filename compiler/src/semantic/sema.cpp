@@ -488,6 +488,54 @@ ir::StmtPtr SemanticAnalyzer::checkLet(const ast::Stmt& stmt) {
   // refers to an outer binding or reports an undefined name.
   scopes_.back().emplace(
       stmt.name, Binding{lowered->slot, type, stmt.isMutable, false, stmt.nameSpan, currentFile_});
+
+  if (stmt.hasElse) {
+    // `let text = fs_read_text(path) else { ... }` runs the block when the value
+    // reports failure. The binding is in scope there, holding the failed value,
+    // so the block can report why.
+    const ir::StructInfo* info = structOf(type);
+    const int okIndex = info == nullptr ? -1 : fieldIndex(*info, "ok");
+    const bool reportsSuccess =
+        okIndex >= 0 &&
+        info->fields[static_cast<std::size_t>(okIndex)].type == ir::Type::boolean();
+    if (type.kind() != ir::TypeKind::Error) {
+      if (info == nullptr) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "'else' needs a value that can report failure, and '" +
+                               ir::typeName(type, *module_) + "' has no 'ok' field");
+        diagnostics_.note(currentFile_, stmt.elseSpan,
+                          "fs_read_text, fs_write_text, parse_i64, str_find, and str_slice "
+                          "return a value with 'ok'; for anything else, check the condition with "
+                          "an 'if' statement");
+      } else if (okIndex < 0) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "'else' needs a value that can report failure, and struct '" +
+                               info->name + "' has no 'ok' field");
+        diagnostics_.note(currentFile_, stmt.elseSpan,
+                          "write the check as 'if result.ok { ... } else { ... }' instead");
+      } else if (!reportsSuccess) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "'else' needs an 'ok: bool' field, and '" + info->name + ".ok' is '" +
+                               ir::typeName(
+                                   info->fields[static_cast<std::size_t>(okIndex)].type,
+                                   *module_) + "'");
+      }
+    }
+    pushScope();
+    lowered->elseBody = checkStatements(stmt.elseBody);
+    popScope();
+    if (reportsSuccess) {
+      lowered->hasElse = true;
+      lowered->okField = static_cast<std::uint32_t>(okIndex);
+      if (!alwaysDiverges(lowered->elseBody)) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "the 'else' block of a binding must end the statement with 'return', "
+                           "'break', or 'continue'");
+        diagnostics_.note(currentFile_, stmt.elseSpan,
+                          "when the value reports failure there is no value to continue with");
+      }
+    }
+  }
   return lowered;
 }
 
@@ -1764,6 +1812,31 @@ bool SemanticAnalyzer::alwaysReturns(const std::vector<ir::StmtPtr>& statements)
   for (const auto& statement : statements) {
     if (stmtAlwaysReturns(*statement)) {
       return true;
+    }
+  }
+  return false;
+}
+
+bool SemanticAnalyzer::alwaysDiverges(const std::vector<ir::StmtPtr>& statements) const {
+  for (const auto& statement : statements) {
+    switch (statement->kind) {
+      case ir::Stmt::Kind::Return:
+      case ir::Stmt::Kind::Break:
+      case ir::Stmt::Kind::Continue:
+        return true;
+      case ir::Stmt::Kind::Block:
+        if (alwaysDiverges(statement->body)) {
+          return true;
+        }
+        break;
+      case ir::Stmt::Kind::If:
+        if (statement->hasElse && alwaysDiverges(statement->body) &&
+            alwaysDiverges(statement->elseBody)) {
+          return true;
+        }
+        break;
+      default:
+        break;
     }
   }
   return false;

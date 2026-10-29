@@ -132,9 +132,11 @@ struct Stmt {
   bool isRangeLoop = false;
   // If then-branch and While/For body; Block contents
   std::vector<std::unique_ptr<Stmt>> body;
-  // If else-branch; empty when there is no `else`
+  // If else-branch, or the failure block of a fallible binding
+  // (`let text = fs_read_text(path) else { ... }`).
   std::vector<std::unique_ptr<Stmt>> elseBody;
   bool hasElse = false;
+  SourceSpan elseSpan;
 };
 
 using StmtPtr = std::unique_ptr<Stmt>;

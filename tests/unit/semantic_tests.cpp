@@ -819,6 +819,45 @@ GABLE_TEST(sema_checks_the_element_type_of_list_push) {
   GABLE_CHECK(mentions(analysis, "expected 'int', found 'str'"));
 }
 
+GABLE_TEST(sema_accepts_an_else_block_on_a_fallible_binding) {
+  const auto analysis = analyze(inMain(
+      "  let read = fs_read_text(\"missing.txt\") else {\n"
+      "    eprint(read.error);\n"
+      "    return 1;\n"
+      "  }\n"
+      "  print(read.text.len);\n"
+      "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_accepts_break_in_an_else_block_inside_a_loop) {
+  const auto analysis = analyze(inMain(
+      "  for i in 0..3 {\n"
+      "    let parsed = parse_i64(\"x\") else {\n"
+      "      break;\n"
+      "    }\n"
+      "    print(parsed.value);\n"
+      "  }\n"
+      "  return 0;"));
+  GABLE_CHECK(analysis.ok());
+}
+
+GABLE_TEST(sema_rejects_an_else_block_that_can_continue) {
+  const auto analysis = analyze(inMain(
+      "  let read = fs_read_text(\"missing.txt\") else {\n"
+      "    eprint(read.error);\n"
+      "  }\n"
+      "  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "must end the statement with 'return', 'break', or 'continue'"));
+}
+
+GABLE_TEST(sema_rejects_else_on_a_value_that_cannot_fail) {
+  const auto analysis = analyze(inMain("  let count = 1 else {\n  return 1;\n  }\n  return 0;"));
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "needs a value that can report failure"));
+}
+
 GABLE_TEST(sema_accepts_receiver_calls) {
   const auto analysis = analyze(inMain(
       "  var names: [str] = [];\n"

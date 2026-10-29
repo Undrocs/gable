@@ -235,7 +235,8 @@ using StmtPtr = std::unique_ptr<Stmt>;
 
 struct Stmt {
   enum class Kind {
-    Let,       // slot, type, isMutable, value = initializer (may be null)
+    Let,       // slot, type, isMutable, value = initializer (may be null),
+               // optional elseBody guarded by the `ok` field at okField
     Assign,    // target = lvalue, value = new value
     Expr,      // value = expression statement
     Return,    // value = returned value, or null for `return;`
@@ -268,6 +269,8 @@ struct Stmt {
   std::vector<StmtPtr> body;
   std::vector<StmtPtr> elseBody;
   bool hasElse = false;
+  /// Let: index of the `ok` field whose value decides whether `elseBody` runs.
+  std::uint32_t okField = 0;
 };
 
 struct LocalVariable {

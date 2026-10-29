@@ -1,0 +1,34 @@
+// A binding that can fail says what to do when it does.
+fn main() -> int {
+    let path: str = arg(1)
+
+    let written = fs_write_text(path, "1\n2\nx\n40\n") else {
+        eprint("cannot write ${path}: ${written.error}")
+        return 1
+    }
+
+    let read = fs_read_text(path) else {
+        eprint("cannot read ${path}: ${read.error}")
+        return 1
+    }
+
+    var count = 0
+    for line in read.text.split("\n") {
+        if line == "" {
+            continue
+        }
+        let parsed = parse_i64(line) else {
+            print("not a number: $line")
+            continue
+        }
+        count = count + parsed.value
+    }
+    print(count)
+
+    let missing = fs_read_text(path + ".missing") else {
+        print("missing file: ${missing.code}")
+        return 0
+    }
+    print("unexpected: ${missing.text}")
+    return 0
+}
