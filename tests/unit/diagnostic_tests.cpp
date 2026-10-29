@@ -198,3 +198,38 @@ GABLE_TEST(diagnostics_do_not_cascade_after_a_missing_brace) {
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(analysis.errorCount() <= 2);
 }
+
+GABLE_TEST(diagnostics_reject_compound_assignment_with_the_full_spelling) {
+  const Analysis analysis = analyze(
+      "fn main() {\n"
+      "  var total = 0\n"
+      "  total += 2\n"
+      "}\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "Gable has no '+=' operator"));
+  GABLE_CHECK(mentions(analysis, "'total = total + 1'"));
+}
+
+GABLE_TEST(diagnostics_explain_joining_a_string_with_a_number) {
+  const Analysis analysis = analyze(
+      "fn main() {\n"
+      "  let label = \"count: \"\n"
+      "  print(label + 1)\n"
+      "}\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "operands of '+' have different types: 'str' and 'int'"));
+  GABLE_CHECK(mentions(analysis, "str_of_i64"));
+  // One mistake, one diagnostic: the operator is reported once, not once per side.
+  GABLE_CHECK_EQ(std::size_t(1), static_cast<std::size_t>(analysis.errorCount()));
+}
+
+GABLE_TEST(diagnostics_explain_joining_a_number_with_a_string) {
+  const Analysis analysis = analyze(
+      "fn main() {\n"
+      "  let count = 2\n"
+      "  print(1 + \"x\")\n"
+      "}\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(mentions(analysis, "operands of '+' have different types: 'int' and 'str'"));
+  GABLE_CHECK_EQ(std::size_t(1), static_cast<std::size_t>(analysis.errorCount()));
+}

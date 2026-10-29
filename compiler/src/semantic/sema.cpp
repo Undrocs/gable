@@ -1021,6 +1021,27 @@ ir::ExprPtr SemanticAnalyzer::checkUnary(const ast::Expr& expr, std::optional<ir
   return lowered;
 }
 
+void SemanticAnalyzer::reportOperandMismatch(SourceSpan span, BinaryOp op, ir::Type left,
+                                             ir::Type right) {
+  diagnostics_.error(currentFile_, span,
+                     std::string("operands of '") + binaryOpSpelling(op) +
+                         "' have different types: '" + ir::typeName(left, *module_) + "' and '" +
+                         ir::typeName(right, *module_) + "'; Gable never converts between types "
+                         "implicitly");
+  if (left.isInteger() && right.isInteger()) {
+    diagnostics_.note(currentFile_, span,
+                      "convert one of them explicitly, for example with 'as " +
+                          ir::typeName(left, *module_) + "'");
+  } else if (left == ir::Type::str() || right == ir::Type::str()) {
+    diagnostics_.note(currentFile_, span,
+                      "a string is joined with '+' only to another string; convert the other "
+                      "value with str_of_i64 or str_of_bool, or write it inside a string "
+                      "literal as '$value'");
+  } else {
+    diagnostics_.note(currentFile_, span, "use 'as' to convert one operand explicitly");
+  }
+}
+
 ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<ir::Type> expected) {
   const BinaryOp op = expr.binaryOp;
   const bool isComparison = isComparisonOperator(op);
@@ -1065,8 +1086,13 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
       lhs = literalAs(*expr.lhs, *lhsLiteral, rhs->type);
       operandType = rhs->type;
     } else {
-      lhs = checkExpr(*expr.lhs, std::nullopt);
-      operandType = lhs->type;
+      // The right operand is a `str` and the left one is a literal. A literal is
+      // never a string, so the two operands disagree and the operator cannot be
+      // applied: reporting the mismatch here is what keeps the backend from being
+      // handed `str + int`.
+      lhs = literalAs(*expr.lhs, *lhsLiteral, ir::Type::intType());
+      reportOperandMismatch(expr.span, op, lhs->type, rhs->type);
+      return failed();
     }
   } else if (!lhsLiteral && rhsLiteral) {
     lhs = checkExpr(*expr.lhs, std::nullopt);
@@ -1083,8 +1109,10 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
       rhs = literalAs(*expr.rhs, *rhsLiteral, lhs->type);
       operandType = lhs->type;
     } else {
-      rhs = checkExpr(*expr.rhs, std::nullopt);
-      operandType = rhs->type;
+      // Mirror of the case above: a string on the left, a literal on the right.
+      rhs = literalAs(*expr.rhs, *rhsLiteral, ir::Type::intType());
+      reportOperandMismatch(expr.span, op, lhs->type, rhs->type);
+      return failed();
     }
   } else {
     lhs = checkExpr(*expr.lhs, std::nullopt);
@@ -1093,12 +1121,7 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
       return failed();
     }
     if (lhs->type != rhs->type) {
-      diagnostics_.error(currentFile_, expr.span,
-                         std::string("operands of '") + binaryOpSpelling(op) +
-                             "' have different types: '" + ir::typeName(lhs->type, *module_) +
-                             "' and '" + ir::typeName(rhs->type, *module_) +
-                             "'; Gable never converts between types implicitly");
-      diagnostics_.note(currentFile_, expr.span, "use 'as' to convert one operand explicitly");
+      reportOperandMismatch(expr.span, op, lhs->type, rhs->type);
       return failed();
     }
     operandType = lhs->type;

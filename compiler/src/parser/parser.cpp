@@ -452,9 +452,17 @@ std::vector<std::unique_ptr<ast::Stmt>> Parser::parseBlock() {
   expect(TokenKind::LBrace, "to begin a block");
   std::vector<std::unique_ptr<ast::Stmt>> statements;
   while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile) && !depthLimitExceeded_) {
+    const std::size_t before = index_;
     auto statement = parseStatement();
     if (statement) {
       statements.push_back(std::move(statement));
+    }
+    if (index_ == before) {
+      // The statement produced no progress. That is a parser defect, but the loop
+      // must still terminate on the input that found it, so the offending token is
+      // stepped over and the file is reported as unparsable.
+      error(current().span, "could not parse this statement");
+      advance();
     }
   }
   if (check(TokenKind::RBrace)) {
@@ -463,6 +471,49 @@ std::vector<std::unique_ptr<ast::Stmt>> Parser::parseBlock() {
     error(current().span, "expected '}' to close the block");
   }
   return statements;
+}
+
+/// The spelling of `kind` when it is one of the arithmetic operators, or an empty
+/// string when it is not.
+static std::string arithmeticSpelling(TokenKind kind) {
+  switch (kind) {
+    case TokenKind::Plus: return "+";
+    case TokenKind::Minus: return "-";
+    case TokenKind::Star: return "*";
+    case TokenKind::Slash: return "/";
+    case TokenKind::Percent: return "%";
+    default: return {};
+  }
+}
+
+/// True when the tokens at the cursor spell `name op= ...`, which is an
+/// assignment written the way another language spells it.
+bool Parser::isCompoundAssignment() const {
+  if (arithmeticSpelling(peek(1).kind).empty()) {
+    return false;
+  }
+  return peek(2).kind == TokenKind::Assign;
+}
+
+/// Reports `name op= value` once and consumes the whole statement, so the mistake
+/// produces one diagnostic instead of a cascade.
+std::unique_ptr<ast::Stmt> Parser::reportCompoundAssignment() {
+  const std::string name = current().text;
+  const std::string op = arithmeticSpelling(peek(1).kind);
+  error(peek(1).span, "Gable has no '" + op + "=' operator");
+  note(peek(1).span,
+       "write the assignment in full, for example '" + name + " = " + name + " " + op + " 1'");
+  // The whole statement is consumed: the name first, then everything up to the
+  // line break that ends it. `atStatementEnd` is true for the name itself, because
+  // it begins a line, so stepping over it first is what makes this terminate.
+  advance();
+  while (!atStatementEnd() && !check(TokenKind::EndOfFile)) {
+    advance();
+  }
+  match(TokenKind::Semicolon);
+  // An empty block stands in for the statement: it has no effect, and returning
+  // null here would leave the caller looking at tokens it has already reported.
+  return std::make_unique<ast::Stmt>(ast::Stmt::Kind::Block, peek(0).span);
 }
 
 std::unique_ptr<ast::Stmt> Parser::parseStatement() {
@@ -535,6 +586,12 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
       return nullptr;
     default:
       break;
+  }
+
+  // `x += 1` is not Gable, and the parser is the only place that can say so while
+  // the operator is still on the screen.
+  if (check(TokenKind::Identifier) && isCompoundAssignment()) {
+    return reportCompoundAssignment();
   }
 
   const Token& begin = current();

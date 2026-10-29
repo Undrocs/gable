@@ -85,6 +85,8 @@ class SemanticAnalyzer {
   ir::ExprPtr checkExpr(const ast::Expr& expr, std::optional<ir::Type> expected);
   ir::ExprPtr checkUnary(const ast::Expr& expr, std::optional<ir::Type> expected);
   ir::ExprPtr checkBinary(const ast::Expr& expr, std::optional<ir::Type> expected);
+  /// Reports two operands that cannot be used together, and says what to write.
+  void reportOperandMismatch(SourceSpan span, BinaryOp op, ir::Type left, ir::Type right);
   ir::ExprPtr checkCall(const ast::Expr& expr);
   ir::ExprPtr checkBuiltinCall(const ast::Expr& expr, const BuiltinInfo& builtin);
   ir::ExprPtr checkListPush(const ast::Expr& expr);

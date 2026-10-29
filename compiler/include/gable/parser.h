@@ -60,6 +60,9 @@ class Parser {
   // Statements.
   std::vector<std::unique_ptr<ast::Stmt>> parseBlock();
   std::unique_ptr<ast::Stmt> parseStatement();
+  /// Recognizes `name += value` and friends, which Gable does not have.
+  bool isCompoundAssignment() const;
+  std::unique_ptr<ast::Stmt> reportCompoundAssignment();
   std::unique_ptr<ast::Stmt> parseLetStatement(bool isMutable);
   std::unique_ptr<ast::Stmt> parseReturnStatement();
   /// True when the current token ends a statement: a line break, ';', the end of

@@ -296,3 +296,26 @@ GABLE_TEST(robustness_rejects_deeply_nested_import_chains) {
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(gabletest::mentions(analysis, "nested more than 64 levels deep"));
 }
+
+// A statement the parser cannot place must still make progress. Before the guard
+// in `parseBlock`, a `+=` produced two million copies of the same diagnostic and
+// only stopped when the node budget ran out.
+GABLE_TEST(robustness_compound_assignment_reports_once) {
+  analyzeWithoutCrashing(
+      "fn main() {\n"
+      "  var x = 1\n"
+      "  x += 2\n"
+      "  x -= 3\n"
+      "  x *= 4\n"
+      "  print(x)\n"
+      "}\n");
+  const gabletest::Analysis analysis = gabletest::analyze(
+      "fn main() {\n"
+      "  var x = 1\n"
+      "  x += 2\n"
+      "  print(x)\n"
+      "}\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(gabletest::mentions(analysis, "Gable has no '+=' operator"));
+  GABLE_CHECK(analysis.errorCount() <= 2);
+}
