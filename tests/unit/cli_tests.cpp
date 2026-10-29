@@ -51,6 +51,14 @@ std::string writeSource(const gable::TemporaryDirectory& directory, const std::s
   return path;
 }
 
+/// Reads a whole file, for asserting what the compiler wrote.
+std::string readSource(const std::string& path) {
+  std::ifstream file(path, std::ios::binary);
+  std::ostringstream contents;
+  contents << file.rdbuf();
+  return contents.str();
+}
+
 gable::TemporaryDirectory makeDirectory() {
   std::string error;
   auto directory = gable::TemporaryDirectory::create(error);
@@ -683,4 +691,43 @@ GABLE_TEST(output_reports_a_directory_collision_by_value) {
   GABLE_CHECK(gable::platform::createDirectoryExclusive(missingParent, error) ==
               gable::platform::CreateDirectoryResult::Failed);
   GABLE_CHECK(!error.empty());
+}
+
+GABLE_TEST(fmt_rewrites_a_file_and_check_reports_it) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string path =
+      writeSource(directory, "messy.gable", "fn main() {\n      print(\"hi\")\n   }\n");
+
+  // `--check` writes nothing and reports the file through the exit status, so a
+  // CI job can require that every file is formatted without touching the tree.
+  const Run check = runCli({"fmt", "--check", path});
+  GABLE_CHECK_EQ(1, check.exitCode);
+  GABLE_CHECK(check.out.find("would be reformatted") != std::string::npos);
+  GABLE_CHECK(readSource(path) == "fn main() {\n      print(\"hi\")\n   }\n");
+
+  const Run format = runCli({"fmt", path});
+  GABLE_CHECK_EQ(0, format.exitCode);
+  GABLE_CHECK(readSource(path) == "fn main() {\n    print(\"hi\")\n}\n");
+
+  // Formatting an already formatted file changes nothing and reports success.
+  const Run again = runCli({"fmt", "--check", path});
+  GABLE_CHECK_EQ(0, again.exitCode);
+}
+
+GABLE_TEST(fmt_refuses_a_file_with_a_syntax_error) {
+  gable::TemporaryDirectory directory = makeDirectory();
+  const std::string text = "fn main() {\n    print(\n}\n";
+  const std::string path = writeSource(directory, "broken.gable", text);
+
+  const Run run = runCli({"fmt", path});
+  GABLE_CHECK_EQ(1, run.exitCode);
+  GABLE_CHECK(run.err.find("error") != std::string::npos);
+  // A file that does not parse is never rewritten, whatever is wrong with it.
+  GABLE_CHECK(readSource(path) == text);
+}
+
+GABLE_TEST(fmt_requires_a_file) {
+  const Run run = runCli({"fmt"});
+  GABLE_CHECK_EQ(2, run.exitCode);
+  GABLE_CHECK(run.err.find("requires at least one source file") != std::string::npos);
 }

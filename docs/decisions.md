@@ -740,3 +740,56 @@ missing file, and a file holding text that is not a number, checking all three
 messages and exit statuses; `semantic_tests` cover the three error shapes and the
 `break`/`continue` forms; `tools/notes` uses the feature for every file operation,
 and its 83 tests run against it.
+
+---
+
+## 0029 — The formatter changes whitespace and nothing else
+
+**Decision.** `gable fmt` rewrites indentation, the spaces between tokens on a
+line, trailing whitespace, and runs of blank lines. It never moves a token to
+another line, never adds or removes a token, and never re-wraps an expression,
+a call, or a list. Comments are preserved: a line comment stays on its line, and a
+block comment keeps its own text, including the line breaks inside it. A file that
+does not parse is reported and left alone. `--check` writes nothing and reports
+through the exit status.
+
+**Why.** In Gable a line break ends a statement (ADR 0023). A formatter that
+re-wrapped code would have to decide where a statement ends, and any disagreement
+between it and the parser changes the meaning of the program it was asked to
+format. Restricting the formatter to whitespace *within* lines removes that risk
+entirely: the token sequence is the same before and after, and the file's meaning
+is a function of that sequence and its line breaks, both of which are preserved.
+
+The second reason is that most of what a re-wrapping formatter is for — fitting an
+expression onto one line, choosing where to break a long call — is a preference,
+and a preference that churns diffs. Gable's formatting question is narrower: is
+there one obvious indentation and one obvious spacing? There is, and that is what
+the command enforces.
+
+**Consequences.** A long line stays long; the formatter never shortens it. The
+programmer decides where lines break, which is also where statements end, so the
+file remains readable in the order it was written. Formatting is idempotent, which
+`--check` depends on and which the unit tests assert for every rule. The formatter
+works on a line at a time and keeps a brace/parenthesis/bracket depth, so it is
+about 300 lines and has no dependency on the parser beyond "the file must parse
+first" — the CLI runs the front end before it writes, and refuses on any error, so
+a half-typed file is never rewritten.
+
+**Alternatives rejected.** (a) Format from the AST and re-print the tree: comments
+are not in the AST, so a formatter built from it would silently delete every
+comment in the file. (b) Token-stream formatting that also decides line breaks:
+the statement rule makes that a semantic decision, and it would be a second
+implementation of the parser's line-break rule. (c) Re-styling with an external
+tool: a dependency and a foreign policy for the one thing this language can define
+for itself. (d) No formatter at all: the style in the examples and documentation
+then has to be maintained by hand, which is where the inconsistencies in the 0.2
+examples came from.
+
+**Verification.** `tests/unit/format_tests.cpp` covers indentation, alignment of a
+closing brace, blank-line folding, operator spacing, prefix versus binary `-`,
+calls and indexes, multi-line lists, line and block comments, strings (including an
+interpolation), idempotence, and both unterminated-input errors.
+`tests/unit/cli_tests.cpp` covers `--check` (writes nothing, exit status 1), a
+rewrite that lands through the atomic path, and a file with a syntax error that is
+left byte-for-byte unchanged. The integration suite runs `gable fmt --check` on
+every example, so all of them are formatted and stay that way.

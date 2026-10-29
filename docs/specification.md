@@ -722,11 +722,18 @@ passed through unchanged.
 gable build <file.gable> [-o <path>]
 gable run <file.gable> [-- program arguments...]
 gable check <file.gable>
+gable fmt <file.gable>... [--check]
 ```
 
 `check` performs the same front-end work as `build` and writes nothing.
 `run` builds a temporary executable and forwards its exit status; arguments after
 `--` are passed to the program.
+
+`fmt` rewrites the files it is given with normalized whitespace, and
+`fmt --check` writes nothing and exits with status 1 when a file would change. The
+formatter never moves a token from one line to another and never adds, removes, or
+reorders one, so it cannot change what a program means; a file that does not parse
+is reported and left untouched. The layout is defined by §16.
 
 On Windows, an output path without a file extension gets `.exe` appended; on
 POSIX hosts the path is used as given.
@@ -846,3 +853,33 @@ unusable output path, `70` internal failure (missing C toolchain, or generated C
 that does not compile). `run` forwards the program's exit status, so a program
 that exits with 1, 2, or 70 is indistinguishable from the corresponding compiler
 failure.
+
+## 14. Formatting
+
+`gable fmt` is defined by what it does not do: it never changes a token, never
+moves one to another line, and never adds or removes a line break except to fold
+consecutive blank lines into one. A file it produces is the same token sequence as
+the file it read, and because a line break ends a statement in Gable (§7), that is
+what makes the formatter safe.
+
+What it does change:
+
+* **Indentation** is four spaces per open brace, parenthesis, or bracket, so a
+  multi-line expression is indented under the line that started it. A line that
+  begins with `}`, `)`, or `]` is aligned with the line that opened it.
+* **Spaces between tokens** on one line: one space around binary operators and
+  after a comma, no space before `,` `;` `:` `)` `]` or around `.` and `..`, no
+  space between a name and the `(` of a call or the `[` of an index, and no space
+  after a prefix `-` or `!`.
+* **Blank lines**: runs collapse to one, and leading blank lines are removed.
+* **Trailing whitespace** is removed from every line except inside a comment.
+
+What it preserves: comments (a line comment stays on its line, a block comment
+keeps its own text including any line breaks inside it), the inside of every
+string literal — including an interpolation, which is formatted as written — and
+the line on which every token sits. Formatting is idempotent: formatting a
+formatted file changes nothing, which `gable fmt --check` relies on.
+
+The examples in this repository are formatted, and the test suite runs
+`gable fmt --check` on each of them, so the style shown in this document is the
+style the command produces.

@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "gable/compiler.h"
+#include "gable/format.h"
+#include "gable/output.h"
 #include "gable/platform.h"
 #include "gable/process.h"
 #include "gable/temporary.h"
@@ -19,10 +21,14 @@ namespace {
 namespace fs = std::filesystem;
 
 struct ParsedCommand {
-  enum class Action { Build, Run, Check, Help, Version };
+  enum class Action { Build, Run, Check, Format, Help, Version };
 
   Action action = Action::Help;
   std::string sourcePath;
+  /// Format: every file named on the command line.
+  std::vector<std::string> formatPaths;
+  /// Format: report files that would change instead of writing them.
+  bool checkOnly = false;
   std::string outputPath;
   std::string emitCPath;
   bool emitC = false;
@@ -111,6 +117,77 @@ CliExitCode executeRun(const ParsedCommand& parsed, std::ostream& out, std::ostr
   return static_cast<CliExitCode>(exitCode);
 }
 
+/// Formats every file named on the command line. A file is rewritten only after
+/// it parses and only through an atomic replace, so an interrupted run cannot
+/// leave a half-written source file, and a program with a syntax error is never
+/// rewritten.
+CliExitCode executeFormat(const ParsedCommand& parsed, std::ostream& out, std::ostream& err) {
+  bool changed = false;
+  bool failed = false;
+  for (const std::string& path : parsed.formatPaths) {
+    // A file is rewritten only when it is valid: whitespace is not the problem
+    // to fix in a file that does not parse.
+    FrontendResult frontend = analyzeSourceFile(path);
+    if (frontend.hasErrors()) {
+      frontend.renderDiagnostics(err);
+      if (!frontend.hasInputError) {
+        err << "gable: " << frontend.diagnostics.errorCount() << " error(s) in " << path << '\n';
+      }
+      failed = true;
+      continue;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+      err << "gable: error: cannot read " << path << '\n';
+      failed = true;
+      continue;
+    }
+    std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+
+    const FormatOutcome formatted = formatSource(source);
+    if (!formatted.ok) {
+      err << path << ": error: " << formatted.error << '\n';
+      failed = true;
+      continue;
+    }
+    if (formatted.text == source) {
+      if (parsed.verbose) {
+        out << path << " is already formatted\n";
+      }
+      continue;
+    }
+    if (parsed.checkOnly) {
+      out << path << " would be reformatted\n";
+      changed = true;
+      continue;
+    }
+    std::string atomicError;
+    auto output = AtomicOutputFile::create(path, atomicError);
+    if (!output) {
+      err << "gable: error: " << atomicError << '\n';
+      failed = true;
+      continue;
+    }
+    if (!output->write(formatted.text, atomicError) || !output->commit(atomicError)) {
+      err << "gable: error: " << atomicError << '\n';
+      failed = true;
+      continue;
+    }
+    if (parsed.verbose) {
+      out << "formatted " << path << '\n';
+    }
+    changed = true;
+  }
+
+  if (failed) {
+    return CliExitCode::CompilationFailed;
+  }
+  // `--check` reports differences through the exit status, so a script or a CI
+  // job can require that every file is formatted.
+  return parsed.checkOnly && changed ? CliExitCode::CompilationFailed : CliExitCode::Success;
+}
+
 /// Analyses `parsed.sourcePath` without producing any output file.
 CliExitCode executeCheck(const ParsedCommand& parsed, std::ostream& err) {
   FrontendResult frontend = analyzeSourceFile(parsed.sourcePath);
@@ -191,6 +268,8 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
     parsed.action = ParsedCommand::Action::Run;
   } else if (command == "check") {
     parsed.action = ParsedCommand::Action::Check;
+  } else if (command == "fmt" || command == "format") {
+    parsed.action = ParsedCommand::Action::Format;
   } else if (!command.empty() && command[0] == '-') {
     err << "gable: error: unknown option '" << command << "'\n";
     return false;
@@ -213,6 +292,10 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
     }
     if (argument == "-v" || argument == "--verbose") {
       parsed.verbose = true;
+      continue;
+    }
+    if (argument == "--check") {
+      parsed.checkOnly = true;
       continue;
     }
     if (argument == "--keep-temps") {
@@ -258,11 +341,28 @@ bool parseArguments(const std::vector<std::string>& arguments, ParsedCommand& pa
       err << "gable: error: unknown option '" << argument << "'\n";
       return false;
     }
+    if (parsed.action == ParsedCommand::Action::Format) {
+      parsed.formatPaths.push_back(argument);
+      continue;
+    }
     if (!parsed.sourcePath.empty()) {
       err << "gable: error: only one source file may be given\n";
       return false;
     }
     parsed.sourcePath = argument;
+  }
+
+  if (parsed.action == ParsedCommand::Action::Format) {
+    if (parsed.formatPaths.empty()) {
+      err << "gable: error: 'fmt' requires at least one source file\n";
+      return false;
+    }
+    if (parsed.emitC || !parsed.outputPath.empty() || !parsed.programArguments.empty() ||
+        parsed.keepTemporaryFiles) {
+      err << "gable: error: 'fmt' only accepts '--check', '-v', and file names\n";
+      return false;
+    }
+    return true;
   }
 
   if (parsed.sourcePath.empty()) {
@@ -306,18 +406,22 @@ void printUsage(std::ostream& out) {
       << "  gable build <file.gable> [options]\n"
       << "  gable run <file.gable> [options] [-- program arguments]\n"
       << "  gable check <file.gable>\n"
+      << "  gable fmt <file.gable>... [--check]\n"
       << "\n"
       << "Commands:\n"
       << "  build    Compile a Gable source file to a native executable.\n"
       << "  run      Compile a Gable source file and execute it, forwarding its exit status.\n"
       << "           Program arguments follow '--'.\n"
       << "  check    Type check a Gable source file without writing any output.\n"
+      << "  fmt      Rewrite files with normalized whitespace; '--check' reports\n"
+      << "           the files that would change and writes nothing.\n"
       << "\n"
       << "Options:\n"
       << "  -o <path>          Output path for 'build' (default: source name without extension).\n"
       << "  -O0 | -O1 | -O2    Optimization level passed to the C backend (default: -O0).\n"
       << "  --emit-c[=<path>]  Write the generated C17 translation unit instead of compiling.\n"
       << "  --keep-temps       Keep generated C and other intermediate files.\n"
+      << "  --check            With 'fmt': report files that are not formatted.\n"
       << "  -v, --verbose      Print the commands that are run.\n"
       << "\n"
       << "Exit status:\n"
@@ -353,6 +457,8 @@ CliExitCode runCommandLine(const std::vector<std::string>& arguments, std::ostre
       return CliExitCode::Success;
     case ParsedCommand::Action::Check:
       return executeCheck(parsed, err);
+    case ParsedCommand::Action::Format:
+      return executeFormat(parsed, out, err);
     case ParsedCommand::Action::Build:
       return executeBuild(parsed, out, err);
     case ParsedCommand::Action::Run:

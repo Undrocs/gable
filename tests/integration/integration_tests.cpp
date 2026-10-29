@@ -326,6 +326,15 @@ int main(int argc, char** argv) {
                               describe("stderr", run.standardError));
         continue;
       }
+      // The examples are also the formatter's corpus: `gable fmt --check` must
+      // find nothing to change, so the style the documentation shows is the
+      // style the formatter produces.
+      const gable::ProcessResult formatted = runner.runCompiler({"fmt", "--check", source.string()});
+      if (!formatted.started || formatted.exitCode != 0) {
+        runner.fail(name, "is not formatted: " + formatted.standardOutput +
+                              describe("stderr", formatted.standardError));
+        continue;
+      }
       const fs::path expected =
           fs::path(argv[3]) / "expected" / (source.stem().string() + ".txt");
       if (fs::exists(expected)) {

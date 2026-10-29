@@ -19,7 +19,8 @@ please report it.
 | Toolchain | `build`, `run`, `check`, `--emit-c`, `--keep-temps`, `-O0/-O1/-O2`, `-v`, program arguments after `--`, runtime discovery, structured process execution, atomic outputs, input-alias refusal |
 | Platforms | Linux with GCC and Clang (CI): verified. Windows with MSVC (CI): verified. macOS and ARM hosts use the POSIX implementation but are not verified or advertised |
 | Runtime | `print`/`eprint` for `str`, `bool`, and all integer widths; string equality, concatenation, conversion, search, slicing, trimming, splitting and joining; growable lists with append, indexing, and iteration; arguments; whole-file I/O returning result structs; division and bounds traps with exit status 70; automatic reclamation of heap values |
-| Testing | 273 unit tests, 65 integration cases, 14 examples whose output is compared against `examples/expected/`, 83 notes-tool tests, 82 runtime file tests, 15 runtime memory tests, 10 runtime list tests, memory-limit measurement, sanitizer configuration |
+| Formatting | `gable fmt` and `gable fmt --check`: whitespace-only, comment-preserving, idempotent, refused on a file that does not parse |
+| Testing | 290 unit tests, 65 integration cases, 14 examples whose output is compared against `examples/expected/` and whose formatting `fmt --check` verifies, 83 notes-tool tests, 82 runtime file tests, 15 runtime memory tests, 10 runtime list tests, memory-limit measurement, sanitizer configuration |
 
 ## Known bugs and rough edges
 
@@ -76,7 +77,9 @@ please report it.
   and not advertised.
 * No fuzzing harness integrated into CI (robustness tests use deterministic
   pseudo-random inputs; libFuzzer/AFL integration is future work).
-* No formatter, linter, language server, editor grammar, or package manager.
+* No language server, editor grammar, or package manager. `gable fmt` exists and
+  is whitespace-only by design (decisions.md, entry 0029); it does not re-wrap
+  lines, sort imports, or split long expressions.
 * No performance benchmarks or tracked compilation timings.
 * No releases, no versioned artefacts, no package distribution.
 * No self-hosting; the compiler is C++ and will stay that way for several

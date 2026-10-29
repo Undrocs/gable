@@ -110,6 +110,7 @@ gable --help | --version
 gable build <file.gable> [options]
 gable run <file.gable> [options] [-- program arguments]
 gable check <file.gable>
+gable fmt <file.gable>... [--check]
 ```
 
 | Option | Meaning |
@@ -119,10 +120,23 @@ gable check <file.gable>
 | `--emit-c` | write the generated C to standard output instead of compiling |
 | `--emit-c=<path>` | write the generated C to a file instead of compiling |
 | `--keep-temps` | keep intermediate files and print their location |
+| `--check` | with `fmt`: report the files that would change, and write nothing |
 | `-v`, `--verbose` | print the commands that are run |
 
 `check` runs the front end and writes nothing; use it in editors and pre-commit
 hooks. Output paths are completed with `.exe` on Windows.
+
+`fmt` rewrites the files it is given with normalized indentation and spacing, and
+`fmt --check` reports them through its exit status instead, which is what a CI job
+or pre-commit hook wants:
+
+```bash
+./build/debug/gable fmt examples/*.gable
+./build/debug/gable fmt --check examples/*.gable
+```
+
+It never moves a token to another line, so it cannot change what a program means
+(specification §14), and it leaves a file that does not parse alone.
 
 Program arguments follow `--` and are passed to the program `run` builds:
 
@@ -135,7 +149,7 @@ Exit statuses:
 | Status | Meaning |
 | --- | --- |
 | 0 | success |
-| 1 | compilation failed (diagnostics on standard error) |
+| 1 | compilation failed (diagnostics on standard error), or `fmt --check` found a file that is not formatted |
 | 2 | usage error |
 | 70 | internal failure: missing toolchain, or generated C did not compile |
 | other | for `run`, the executed program's exit status |

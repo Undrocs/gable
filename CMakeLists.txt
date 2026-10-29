@@ -124,6 +124,7 @@ add_library(gable_compiler STATIC
   compiler/src/types/ir.cpp
   compiler/src/types/operators.cpp
   compiler/src/codegen/c_backend.cpp
+  compiler/src/format/format.cpp
   compiler/src/driver/frontend.cpp
   compiler/src/driver/loader.cpp
   compiler/src/driver/output.cpp
@@ -177,6 +178,7 @@ if(BUILD_TESTING)
     tests/unit/codegen_tests.cpp
     tests/unit/cli_tests.cpp
     tests/unit/diagnostic_tests.cpp
+    tests/unit/format_tests.cpp
     tests/unit/robustness_tests.cpp
   )
   target_link_libraries(gable_unit_tests PRIVATE gable_compiler)

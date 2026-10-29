@@ -136,9 +136,11 @@ Acceptance: a program that needs growable collections and bounded memory use can
 written without workarounds, and the specification documents every construct
 used.
 
-## Milestone 8 — Developer experience
+## Milestone 8 — Developer experience · partially complete
 
-* `gable fmt` with a stable formatting policy.
+* `gable fmt` with a stable formatting policy — **complete**: whitespace-only,
+  comment-preserving, idempotent, checked in CI by running `fmt --check` on every
+  example (ADR 0029).
 * Tree-sitter grammar and editor support.
 * Language server reusing `gable_compiler` (diagnostics, hover, go-to-definition).
 * Debug information for Gable source, mapped through the backend.
