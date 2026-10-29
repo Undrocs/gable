@@ -248,9 +248,10 @@ no language semantics that the type checker should know about, and is linked
 statically into every executable. File failures are returned as values with a
 stable code, never as localised text.
 
-Strings created at run time are allocated with `malloc` and never freed. That is a
-documented v0.2 property, not an oversight; see
-[decisions.md](decisions.md) ADR 0017.
+Strings and list storage are allocated on a heap the runtime manages: a value is
+reclaimed once the program can no longer reach it, which is a documented property
+of the language (specification §12) rather than an implementation detail; see
+[decisions.md](decisions.md) ADR 0021.
 
 ## Testing
 

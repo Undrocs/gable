@@ -97,7 +97,7 @@ program that prints one line had to return a status, and joining text meant
   a field called as a method, an unknown method, a missing number conversion, an
   assignment to an undeclared name.
 
-Verified by: 273 unit tests, 65 integration cases, 14 examples with recorded
+Verified by: 294 unit tests, 65 integration cases, 14 examples with recorded
 output, 83 notes-tool tests, and 107 runtime tests.
 
 ## Milestone 6 — LLVM backend

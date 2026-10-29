@@ -337,13 +337,15 @@ int main(int argc, char** argv) {
       }
       const fs::path expected =
           fs::path(argv[3]) / "expected" / (source.stem().string() + ".txt");
-      if (fs::exists(expected)) {
-        const std::string wanted = readFile(expected);
-        if (run.standardOutput != wanted) {
-          runner.fail(name, "output differs from " + expected.string() + "\n--- expected\n" +
-                                wanted + "\n--- actual\n" + run.standardOutput);
-          continue;
-        }
+      if (!fs::exists(expected)) {
+        runner.fail(name, "has no " + expected.string() + " recording its output");
+        continue;
+      }
+      const std::string wanted = readFile(expected);
+      if (run.standardOutput != wanted) {
+        runner.fail(name, "output differs from " + expected.string() + "\n--- expected\n" +
+                              wanted + "--- actual\n" + run.standardOutput);
+        continue;
       }
       runner.pass();
     }

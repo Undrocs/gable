@@ -53,7 +53,7 @@ Hello from Gable!
   inspecting the generated code.
 * `gable build`, `gable run`, and `gable check`, with defined exit statuses and
   atomic, input-safe output handling.
-* 273 unit tests, 65 end-to-end cases, 14 example programs whose printed output
+* 294 unit tests, 65 end-to-end cases, 14 example programs whose printed output
   is compared against `examples/expected/`, 83 acceptance tests for the notes
   tool, and 107 runtime tests — run in Debug, Release, and AddressSanitizer/UBSan
   configurations.
