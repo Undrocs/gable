@@ -104,7 +104,7 @@ done
 "$cxx" "${common[@]}" "$out/main.o" "${objects[@]}" -o "$out/gable"
 
 echo "== tests"
-"$cxx" "${common[@]}" -I"$root/tests/unit" \
+"$cxx" "${common[@]}" -I"$root/tests/unit" -DGABLE_SOURCE_DIR=\"$root\" \
   "$root/tests/unit/"*.cpp "${objects[@]}" -o "$out/gable_unit_tests"
 "$cxx" "${common[@]}" \
   "$root/tests/integration/integration_tests.cpp" "${objects[@]}" \

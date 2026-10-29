@@ -179,10 +179,15 @@ if(BUILD_TESTING)
     tests/unit/cli_tests.cpp
     tests/unit/diagnostic_tests.cpp
     tests/unit/format_tests.cpp
+    tests/unit/editor_grammar_tests.cpp
     tests/unit/robustness_tests.cpp
   )
   target_link_libraries(gable_unit_tests PRIVATE gable_compiler)
   target_include_directories(gable_unit_tests PRIVATE tests/unit)
+  # One test reads files from the repository (the editor grammar), which needs to
+  # know where the repository is when the test binary runs from the build tree.
+  target_compile_definitions(gable_unit_tests PRIVATE
+    GABLE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME unit COMMAND gable_unit_tests)
 
   # The notes tool is the acceptance test: a real multi-file program that

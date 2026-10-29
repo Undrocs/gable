@@ -77,9 +77,13 @@ please report it.
   and not advertised.
 * No fuzzing harness integrated into CI (robustness tests use deterministic
   pseudo-random inputs; libFuzzer/AFL integration is future work).
-* No language server, editor grammar, or package manager. `gable fmt` exists and
-  is whitespace-only by design (decisions.md, entry 0029); it does not re-wrap
-  lines, sort imports, or split long expressions.
+* No language server and no package manager. `gable fmt` exists and is
+  whitespace-only by design (decisions.md, entry 0029); it does not re-wrap lines,
+  sort imports, or split long expressions.
+* Editor support is a TextMate grammar (`tools/editors`) plus `gable fmt`. The
+  grammar is checked for structure and for covering every keyword, type, and
+  built-in, but syntax highlighting itself is not covered by any test, because
+  asserting it needs an editor.
 * No performance benchmarks or tracked compilation timings.
 * No releases, no versioned artefacts, no package distribution.
 * No self-hosting; the compiler is C++ and will stay that way for several

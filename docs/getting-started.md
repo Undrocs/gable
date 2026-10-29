@@ -138,6 +138,10 @@ or pre-commit hook wants:
 It never moves a token to another line, so it cannot change what a program means
 (specification §14), and it leaves a file that does not parse alone.
 
+For syntax highlighting, `tools/editors/gable.tmLanguage.json` is a TextMate
+grammar; `tools/editors/README.md` says which editors load it and what is not
+tested about it.
+
 Program arguments follow `--` and are passed to the program `run` builds:
 
 ```bash

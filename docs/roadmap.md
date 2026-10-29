@@ -141,7 +141,11 @@ used.
 * `gable fmt` with a stable formatting policy — **complete**: whitespace-only,
   comment-preserving, idempotent, checked in CI by running `fmt --check` on every
   example (ADR 0029).
-* Tree-sitter grammar and editor support.
+* Tree-sitter grammar and editor support — **partly complete**: a TextMate
+  grammar in `tools/editors` covers comments, strings with interpolation,
+  literals, keywords, types, built-ins, and names, and the unit tests check that
+  every keyword, type, and built-in appears in it. A tree-sitter grammar and a
+  language server are not started.
 * Language server reusing `gable_compiler` (diagnostics, hover, go-to-definition).
 * Debug information for Gable source, mapped through the backend.
 * Release process and documented versioning.
