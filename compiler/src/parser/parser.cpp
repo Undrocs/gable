@@ -636,6 +636,20 @@ std::unique_ptr<ast::Stmt> Parser::parseReturnStatement() {
   return statement;
 }
 
+/// Reports `if x = 2 {` / `while x = 2 {` where a comparison belongs, and
+/// consumes the assignment so that the body still parses: one mistake, one error.
+void Parser::discardComparisonAssignment(const char* statement) {
+  if (!check(TokenKind::Assign)) {
+    return;
+  }
+  const SourceSpan span = current().span;
+  error(span, std::string("'=' assigns a value; compare with '==' in the condition of ") +
+                  statement);
+  note(span, "to assign, write the assignment as a statement of its own");
+  advance();
+  (void)parseExpression(0);
+}
+
 std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
   // `else if` recurses through this function rather than through parseStatement,
   // so the chain needs a guard of its own as well.
@@ -651,6 +665,7 @@ std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
     synchronize();
     return nullptr;
   }
+  discardComparisonAssignment("an 'if' statement");
 
   if (!check(TokenKind::LBrace)) {
     error(current().span,
@@ -691,6 +706,7 @@ std::unique_ptr<ast::Stmt> Parser::parseWhileStatement() {
     synchronize();
     return nullptr;
   }
+  discardComparisonAssignment("a 'while' statement");
 
   if (!check(TokenKind::LBrace)) {
     error(current().span,

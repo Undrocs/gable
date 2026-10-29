@@ -573,6 +573,9 @@ ir::ExprPtr SemanticAnalyzer::checkLvalue(const ast::Expr& expr) {
       Binding* binding = lookup(expr.name);
       if (binding == nullptr) {
         diagnostics_.error(currentFile_, expr.span, "undefined variable '" + expr.name + "'");
+        diagnostics_.note(currentFile_, expr.span,
+                          "a variable has to be declared before it is assigned: 'var " +
+                              expr.name + " = 0'");
         return std::make_unique<ir::Expr>(ir::Expr::Kind::Local, ir::Type::error(), expr.span);
       }
       if (!binding->isMutable) {
@@ -610,7 +613,8 @@ ir::ExprPtr SemanticAnalyzer::checkLvalue(const ast::Expr& expr) {
       const int index = fieldIndex(*info, expr.fieldName);
       if (index < 0) {
         reportUnknownField(expr.fieldSpan, *info, expr.fieldName);
-        return base;
+        return std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, ir::Type::error(),
+                                          expr.span);
       }
       const ir::Type fieldType = info->fields[static_cast<std::size_t>(index)].type;
       auto access = std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, fieldType, expr.span);
@@ -1397,7 +1401,9 @@ ir::ExprPtr SemanticAnalyzer::checkFieldAccess(const ast::Expr& expr) {
   const int index = fieldIndex(*info, expr.fieldName);
   if (index < 0) {
     reportUnknownField(expr.fieldSpan, *info, expr.fieldName);
-    return base;
+    // The access is an error, so the expression around it must not report a
+    // second problem: `return p.z` in an int function is one mistake, not two.
+    return std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, ir::Type::error(), expr.span);
   }
   const ir::Type fieldType = info->fields[static_cast<std::size_t>(index)].type;
   auto lowered = std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, fieldType, expr.span);
@@ -1599,6 +1605,21 @@ ir::ExprPtr SemanticAnalyzer::checkMethodCall(const ast::Expr& expr) {
 }
 
 void SemanticAnalyzer::reportUnknownMethod(const ast::Expr& expr, ir::Type receiverType) {
+  // `.len` and a struct's fields are values, not calls: saying so at the
+  // parenthesis points at exactly what has to be deleted.
+  if (expr.name == "len" &&
+      (receiverType == ir::Type::str() || receiverType.isIterable())) {
+    diagnostics_.error(currentFile_, expr.fieldSpan,
+                       "'len' is a value, not a method; write '.len' without '()'");
+    return;
+  }
+  if (const ir::StructInfo* info = structOf(receiverType);
+      info != nullptr && fieldIndex(*info, expr.name) >= 0) {
+    diagnostics_.error(currentFile_, expr.fieldSpan,
+                       "'" + expr.name + "' is a field of struct '" + info->name +
+                           "', not a method; read it without '()'");
+    return;
+  }
   diagnostics_.error(currentFile_, expr.fieldSpan,
                      "'" + ir::typeName(receiverType, *module_) + "' has no method '" +
                          expr.name + "'");
@@ -1806,6 +1827,12 @@ void SemanticAnalyzer::reportTypeMismatch(SourceSpan span, const std::string& co
                      "type mismatch in " + context + ": expected '" +
                          ir::typeName(expected, *module_) + "', found '" +
                          ir::typeName(actual, *module_) + "'");
+  if (expected.isInteger() && actual.isInteger()) {
+    diagnostics_.note(currentFile_, span,
+                      "Gable does not convert between number types on its own; write an "
+                      "explicit conversion with 'as', for example 'value as " +
+                          ir::typeName(expected, *module_) + "'");
+  }
 }
 
 bool SemanticAnalyzer::alwaysReturns(const std::vector<ir::StmtPtr>& statements) const {

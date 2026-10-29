@@ -176,6 +176,7 @@ if(BUILD_TESTING)
     tests/unit/semantic_tests.cpp
     tests/unit/codegen_tests.cpp
     tests/unit/cli_tests.cpp
+    tests/unit/diagnostic_tests.cpp
     tests/unit/robustness_tests.cpp
   )
   target_link_libraries(gable_unit_tests PRIVATE gable_compiler)

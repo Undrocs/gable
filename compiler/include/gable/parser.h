@@ -67,6 +67,8 @@ class Parser {
   bool atStatementEnd() const;
   /// Consumes an optional ';' and reports a missing statement end otherwise.
   void endStatement(const char* context);
+  /// Reports `if x = 2` where a comparison belongs and consumes the assignment.
+  void discardComparisonAssignment(const char* statement);
   std::unique_ptr<ast::Stmt> parseIfStatement();
   std::unique_ptr<ast::Stmt> parseWhileStatement();
   std::unique_ptr<ast::Stmt> parseForStatement();
