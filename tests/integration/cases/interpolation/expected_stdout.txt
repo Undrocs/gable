@@ -1,0 +1,7 @@
+hello, Ada
+3 tasks, 4 after today
+done: false, and write the report
+costs $5 and Ada
+escaped: $name
+adjacent: Ada3
+AdaAda

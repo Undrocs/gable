@@ -14,6 +14,7 @@ bool isTypeKeyword(TokenKind kind) {
     case TokenKind::KwI16:
     case TokenKind::KwI32:
     case TokenKind::KwI64:
+    case TokenKind::KwInt:
     case TokenKind::KwU8:
     case TokenKind::KwU16:
     case TokenKind::KwU32:
@@ -85,6 +86,20 @@ void Parser::error(SourceSpan span, std::string message) {
 
 void Parser::note(SourceSpan span, std::string message) {
   diagnostics_.note(file_, span, std::move(message));
+}
+
+bool Parser::atStatementEnd() const {
+  return check(TokenKind::Semicolon) || check(TokenKind::RBrace) ||
+         check(TokenKind::EndOfFile) || current().newlineBefore;
+}
+
+void Parser::endStatement(const char* context) {
+  if (match(TokenKind::Semicolon) || atStatementEnd()) {
+    return;
+  }
+  error(current().span, std::string("expected a line break after ") + context + ", found " +
+                            tokenKindName(current().kind));
+  note(current().span, "a line break ends a statement; ';' is also accepted");
 }
 
 const Token& Parser::peek(std::size_t lookahead) const {
@@ -176,7 +191,7 @@ void Parser::parseImport(ast::Program& program) {
   if (path.stringValue.empty()) {
     error(path.span, "import path must not be empty");
   }
-  expect(TokenKind::Semicolon, "after import path");
+  endStatement("an import");
   ast::ImportDecl declaration;
   declaration.path = path.stringValue;
   declaration.span = SourceSpan{keyword.span.begin, previousEnd_};
@@ -185,9 +200,15 @@ void Parser::parseImport(ast::Program& program) {
 
 void Parser::synchronize() {
   std::size_t steps = 0;
+  const TokenKind first = current().kind;
   while (!check(TokenKind::EndOfFile) && steps < kMaxSynchronizeSteps) {
     ++steps;
     if (match(TokenKind::Semicolon)) {
+      return;
+    }
+    // Statements end at a line break, so the next line is a good place to start
+    // reporting again instead of skipping the rest of the block.
+    if (steps > 0 && current().kind != first && current().newlineBefore) {
       return;
     }
     if (check(TokenKind::RBrace)) {
@@ -334,9 +355,16 @@ std::unique_ptr<ast::StructDecl> Parser::parseStruct() {
       continue;
     }
     declaration->fields.push_back(std::move(field));
-    if (!match(TokenKind::Comma)) {
-      break;
+    if (match(TokenKind::Comma)) {
+      continue;
     }
+    if (check(TokenKind::RBrace) || check(TokenKind::EndOfFile) || current().newlineBefore) {
+      continue;
+    }
+    error(current().span, std::string("expected ',' or a line break after the field '") +
+                              declaration->fields.back().name + "', found " +
+                              tokenKindName(current().kind));
+    break;
   }
 
   if (check(TokenKind::RBrace)) {
@@ -424,9 +452,17 @@ std::vector<std::unique_ptr<ast::Stmt>> Parser::parseBlock() {
   expect(TokenKind::LBrace, "to begin a block");
   std::vector<std::unique_ptr<ast::Stmt>> statements;
   while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile) && !depthLimitExceeded_) {
+    const std::size_t before = index_;
     auto statement = parseStatement();
     if (statement) {
       statements.push_back(std::move(statement));
+    }
+    if (index_ == before) {
+      // The statement produced no progress. That is a parser defect, but the loop
+      // must still terminate on the input that found it, so the offending token is
+      // stepped over and the file is reported as unparsable.
+      error(current().span, "could not parse this statement");
+      advance();
     }
   }
   if (check(TokenKind::RBrace)) {
@@ -435,6 +471,49 @@ std::vector<std::unique_ptr<ast::Stmt>> Parser::parseBlock() {
     error(current().span, "expected '}' to close the block");
   }
   return statements;
+}
+
+/// The spelling of `kind` when it is one of the arithmetic operators, or an empty
+/// string when it is not.
+static std::string arithmeticSpelling(TokenKind kind) {
+  switch (kind) {
+    case TokenKind::Plus: return "+";
+    case TokenKind::Minus: return "-";
+    case TokenKind::Star: return "*";
+    case TokenKind::Slash: return "/";
+    case TokenKind::Percent: return "%";
+    default: return {};
+  }
+}
+
+/// True when the tokens at the cursor spell `name op= ...`, which is an
+/// assignment written the way another language spells it.
+bool Parser::isCompoundAssignment() const {
+  if (arithmeticSpelling(peek(1).kind).empty()) {
+    return false;
+  }
+  return peek(2).kind == TokenKind::Assign;
+}
+
+/// Reports `name op= value` once and consumes the whole statement, so the mistake
+/// produces one diagnostic instead of a cascade.
+std::unique_ptr<ast::Stmt> Parser::reportCompoundAssignment() {
+  const std::string name = current().text;
+  const std::string op = arithmeticSpelling(peek(1).kind);
+  error(peek(1).span, "Gable has no '" + op + "=' operator");
+  note(peek(1).span,
+       "write the assignment in full, for example '" + name + " = " + name + " " + op + " 1'");
+  // The whole statement is consumed: the name first, then everything up to the
+  // line break that ends it. `atStatementEnd` is true for the name itself, because
+  // it begins a line, so stepping over it first is what makes this terminate.
+  advance();
+  while (!atStatementEnd() && !check(TokenKind::EndOfFile)) {
+    advance();
+  }
+  match(TokenKind::Semicolon);
+  // An empty block stands in for the statement: it has no effect, and returning
+  // null here would leave the caller looking at tokens it has already reported.
+  return std::make_unique<ast::Stmt>(ast::Stmt::Kind::Block, peek(0).span);
 }
 
 std::unique_ptr<ast::Stmt> Parser::parseStatement() {
@@ -467,14 +546,14 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
     case TokenKind::KwBreak: {
       const Token& token = advance();
       auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Break, token.span);
-      expect(TokenKind::Semicolon, "after 'break'");
+      endStatement("'break'");
       statement->span = spanFrom(token);
       return statement;
     }
     case TokenKind::KwContinue: {
       const Token& token = advance();
       auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Continue, token.span);
-      expect(TokenKind::Semicolon, "after 'continue'");
+      endStatement("'continue'");
       statement->span = spanFrom(token);
       return statement;
     }
@@ -509,6 +588,12 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
       break;
   }
 
+  // `x += 1` is not Gable, and the parser is the only place that can say so while
+  // the operator is still on the screen.
+  if (check(TokenKind::Identifier) && isCompoundAssignment()) {
+    return reportCompoundAssignment();
+  }
+
   const Token& begin = current();
   ast::ExprPtr expression = parseExpression(0);
   if (!expression) {
@@ -525,14 +610,14 @@ std::unique_ptr<ast::Stmt> Parser::parseStatement() {
       synchronize();
       return nullptr;
     }
-    expect(TokenKind::Semicolon, "after assignment");
+    endStatement("an assignment");
     statement->span = spanFrom(begin);
     return statement;
   }
 
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::ExprStmt, begin.span);
   statement->value = std::move(expression);
-  expect(TokenKind::Semicolon, "after expression");
+  endStatement("this statement");
   statement->span = spanFrom(begin);
   return statement;
 }
@@ -574,7 +659,20 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
     synchronize();
     return nullptr;
   }
-  expect(TokenKind::Semicolon, "after variable declaration");
+  // `let text = fs_read_text(path) else { ... }` handles failure where the value
+  // is bound, instead of three lines later.
+  if (check(TokenKind::KwElse)) {
+    statement->elseSpan = advance().span;
+    if (!check(TokenKind::LBrace)) {
+      error(current().span, "expected '{' after 'else'; Gable requires braced bodies");
+      synchronize();
+      return nullptr;
+    }
+    statement->hasElse = true;
+    statement->elseBody = parseBlock();
+  } else {
+    endStatement("a declaration");
+  }
   statement->span = spanFrom(begin);
   return statement;
 }
@@ -582,16 +680,31 @@ std::unique_ptr<ast::Stmt> Parser::parseLetStatement(bool isMutable) {
 std::unique_ptr<ast::Stmt> Parser::parseReturnStatement() {
   const Token& begin = advance();  // 'return'
   auto statement = std::make_unique<ast::Stmt>(ast::Stmt::Kind::Return, begin.span);
-  if (!check(TokenKind::Semicolon)) {
+  // `return` on its own line returns no value; `return 0` returns one.
+  if (!atStatementEnd()) {
     statement->value = parseExpression(0);
     if (!statement->value) {
       synchronize();
       return nullptr;
     }
   }
-  expect(TokenKind::Semicolon, "after return statement");
+  endStatement("a 'return' statement");
   statement->span = spanFrom(begin);
   return statement;
+}
+
+/// Reports `if x = 2 {` / `while x = 2 {` where a comparison belongs, and
+/// consumes the assignment so that the body still parses: one mistake, one error.
+void Parser::discardComparisonAssignment(const char* statement) {
+  if (!check(TokenKind::Assign)) {
+    return;
+  }
+  const SourceSpan span = current().span;
+  error(span, std::string("'=' assigns a value; compare with '==' in the condition of ") +
+                  statement);
+  note(span, "to assign, write the assignment as a statement of its own");
+  advance();
+  (void)parseExpression(0);
 }
 
 std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
@@ -609,6 +722,7 @@ std::unique_ptr<ast::Stmt> Parser::parseIfStatement() {
     synchronize();
     return nullptr;
   }
+  discardComparisonAssignment("an 'if' statement");
 
   if (!check(TokenKind::LBrace)) {
     error(current().span,
@@ -649,6 +763,7 @@ std::unique_ptr<ast::Stmt> Parser::parseWhileStatement() {
     synchronize();
     return nullptr;
   }
+  discardComparisonAssignment("a 'while' statement");
 
   if (!check(TokenKind::LBrace)) {
     error(current().span,
@@ -862,6 +977,40 @@ ast::ExprPtr Parser::parsePrimary() {
       expressionDepth_ = 1;
       return parsePostfix(std::move(expr));
     }
+    case TokenKind::StringStart: {
+      advance();
+      auto expr = std::make_unique<ast::Expr>(ast::Expr::Kind::InterpolatedString, token.span);
+      expr->parts.push_back(token.stringValue);
+      int argumentDepth = 0;
+      for (;;) {
+        ast::ExprPtr argument = parseExpression(0);
+        if (!argument) {
+          return nullptr;
+        }
+        argumentDepth = std::max(argumentDepth, expressionDepth_);
+        expr->arguments.push_back(std::move(argument));
+        if (check(TokenKind::StringPart)) {
+          expr->parts.push_back(current().stringValue);
+          advance();
+          continue;
+        }
+        if (check(TokenKind::StringEnd)) {
+          expr->parts.push_back(current().stringValue);
+          expr->span = SourceSpan{token.span.begin, current().span.end};
+          advance();
+          break;
+        }
+        error(current().span,
+              "expected the end of the string literal after an interpolation, found " +
+                  std::string(tokenKindName(current().kind)));
+        return nullptr;
+      }
+      if (!growTreeDepth(argumentDepth + 1, token.span)) {
+        return nullptr;
+      }
+      expressionDepth_ = argumentDepth + 1;
+      return parsePostfix(std::move(expr));
+    }
     case TokenKind::KwTrue:
     case TokenKind::KwFalse: {
       advance();
@@ -982,6 +1131,47 @@ ast::ExprPtr Parser::parsePostfix(ast::ExprPtr base) {
       }
       baseDepth += 1;
       expressionDepth_ = baseDepth;
+      // `text.trim()` is a call on the value, so the parenthesis turns the field
+      // access into a method call whose receiver is what came before the '.'.
+      // Field access without a call stays a read.
+      if (check(TokenKind::LParen)) {
+        advance();
+        const std::size_t receiverBegin = base->span.begin;
+        auto call = std::make_unique<ast::Expr>(ast::Expr::Kind::MethodCall, field.span);
+        call->name = field.text;
+        call->fieldSpan = field.span;
+        call->lhs = std::move(base);
+        int argumentDepth = 0;
+        if (!check(TokenKind::RParen)) {
+          for (;;) {
+            ast::ExprPtr argument = parseExpression(0);
+            if (!argument) {
+              return nullptr;
+            }
+            argumentDepth = std::max(argumentDepth, expressionDepth_);
+            call->arguments.push_back(std::move(argument));
+            if (match(TokenKind::Comma)) {
+              continue;
+            }
+            break;
+          }
+        }
+        if (!check(TokenKind::RParen)) {
+          error(current().span,
+                "expected ')' to close the argument list of '." + field.text + "()'");
+          return nullptr;
+        }
+        const Token& close = advance();
+        call->span = SourceSpan{receiverBegin, close.span.end};
+        if (!growTreeDepth(std::max(baseDepth, argumentDepth) + 1, field.span)) {
+          return nullptr;
+        }
+        baseDepth = std::max(baseDepth, argumentDepth) + 1;
+        expressionDepth_ = baseDepth;
+        base = std::move(call);
+        continue;
+      }
+
       auto access = std::make_unique<ast::Expr>(ast::Expr::Kind::FieldAccess, field.span);
       access->span = SourceSpan{base->span.begin, field.span.end};
       access->fieldName = field.text;

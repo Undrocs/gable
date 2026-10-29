@@ -33,6 +33,17 @@ ctest --preset debug
 
 Other presets: `release`, `asan` (AddressSanitizer and UndefinedBehaviorSanitizer).
 
+Where CMake and Ninja are not available, `tools/build-without-cmake.sh` performs
+the same build with the host compilers and produces the same binaries:
+
+```bash
+tools/build-without-cmake.sh build/debug           # compiler and test binaries
+tools/build-without-cmake.sh build/asan --sanitize # AddressSanitizer and UBSan
+```
+
+It prints the directory it built into. The CMake build is the supported path; the
+script exists so that the compiler can be built on a machine without CMake.
+
 ## Run the tests
 
 ```bash
@@ -41,21 +52,22 @@ ctest --test-dir build/debug --output-on-failure
 
 Six CTest entries exist:
 
-* `unit` — 232 fast unit tests (lexer, parser, semantics including multi-file
-  programs, code generation, CLI, robustness).
+* `unit` — 273 fast unit tests (lexer, parser, semantics including multi-file
+  programs, code generation, CLI, diagnostics, robustness).
 * `notes_tool` — builds `tools/notes` and drives it through its command line; this
   is the end-to-end test for a real multi-file program.
 * `runtime_files` — calls the runtime's file builtins from C, which is the only
   way to reach a NUL byte in a path or a file above the read limit. POSIX only;
   it is not registered on Windows.
-* `runtime_lists` — calls the runtime's list support from C:
-  growth, shared handles, element layout, and reclamation.
+* `runtime_lists` — calls the runtime's list support from C: growth, shared
+  handles, element layout, and reclamation.
 * `runtime_memory` — checks that values reachable from the stack survive a
   collection and that unreachable ones are reclaimed.
 * `integration` — compiles and runs every case under `tests/integration/cases`
   and every program under `examples/`, comparing stdout, exit status, and
-  diagnostics. Some cases pass program arguments. It requires a working C
-  compiler.
+  diagnostics. Example output is compared against `examples/expected/<name>.txt`,
+  so an example is a test of the result it documents. Some cases pass program
+  arguments. It requires a working C compiler.
 
 Two further checks are scripts rather than CTest entries, and both need a POSIX
 host:
@@ -69,9 +81,8 @@ tools/measure-notes.sh build/debug/gable 20000   # timings of the notes tool on 
 
 ```bash
 cat > hello.gable <<'EOF'
-fn main() -> i32 {
-    print("Hello from Gable!");
-    return 0;
+fn main() {
+    print("Hello from Gable!")
 }
 EOF
 
@@ -83,7 +94,8 @@ EOF
 
 `build` writes an executable named after the source file unless `-o` is given.
 `run` compiles into a private temporary directory, executes the program, and
-forwards its exit status.
+forwards its exit status. `fn main()` exits with status 0; write
+`fn main() -> int` and `return 1` to report a failure to the shell.
 
 Inspect the generated C (useful when reporting a backend bug):
 
@@ -98,6 +110,7 @@ gable --help | --version
 gable build <file.gable> [options]
 gable run <file.gable> [options] [-- program arguments]
 gable check <file.gable>
+gable fmt <file.gable>... [--check]
 ```
 
 | Option | Meaning |
@@ -107,10 +120,27 @@ gable check <file.gable>
 | `--emit-c` | write the generated C to standard output instead of compiling |
 | `--emit-c=<path>` | write the generated C to a file instead of compiling |
 | `--keep-temps` | keep intermediate files and print their location |
+| `--check` | with `fmt`: report the files that would change, and write nothing |
 | `-v`, `--verbose` | print the commands that are run |
 
 `check` runs the front end and writes nothing; use it in editors and pre-commit
 hooks. Output paths are completed with `.exe` on Windows.
+
+`fmt` rewrites the files it is given with normalized indentation and spacing, and
+`fmt --check` reports them through its exit status instead, which is what a CI job
+or pre-commit hook wants:
+
+```bash
+./build/debug/gable fmt examples/*.gable
+./build/debug/gable fmt --check examples/*.gable
+```
+
+It never moves a token to another line, so it cannot change what a program means
+(specification §14), and it leaves a file that does not parse alone.
+
+For syntax highlighting, `tools/editors/gable.tmLanguage.json` is a TextMate
+grammar; `tools/editors/README.md` says which editors load it and what is not
+tested about it.
 
 Program arguments follow `--` and are passed to the program `run` builds:
 
@@ -123,7 +153,7 @@ Exit statuses:
 | Status | Meaning |
 | --- | --- |
 | 0 | success |
-| 1 | compilation failed (diagnostics on standard error) |
+| 1 | compilation failed (diagnostics on standard error), or `fmt --check` found a file that is not formatted |
 | 2 | usage error |
 | 70 | internal failure: missing toolchain, or generated C did not compile |
 | other | for `run`, the executed program's exit status |
@@ -152,41 +182,101 @@ cmake --install build/release --prefix ~/.local
 ```
 
 This installs the `gable` binary, the runtime headers, the runtime library
-(`libgable_rt.a`, or `gable_rt.lib` on Windows), and the documentation. The compiler library is not installed yet because its interface is
-not stable. Add `~/.local/bin` to `PATH` and the installed compiler will find its
-runtime through the install paths recorded at configure time.
+(`libgable_rt.a`, or `gable_rt.lib` on Windows), and the documentation. The
+compiler library is not installed yet because its interface is not stable. Add
+`~/.local/bin` to `PATH` and the installed compiler will find its runtime through
+the install paths recorded at configure time.
 
 ## Learn the language
 
-The language is specified in [specification.md](specification.md). `examples/`
-contains complete programs:
+The language is specified in [specification.md](specification.md). This is a
+complete program:
+
+```gable
+// Greet the people named on the command line, or one default person.
+fn greeting(name: str) -> str {
+    return "hello, $name"
+}
+
+fn main() {
+    if arg_count() < 2 {
+        print(greeting("world"))
+        return
+    }
+    for index in 1..arg_count() {
+        print(greeting(arg(index)))
+    }
+}
+```
+
+```
+$ gable run greet.gable
+hello, world
+$ gable run greet.gable -- Ada Grace
+hello, Ada
+hello, Grace
+```
+
+Five things to notice, all of them the whole of the rule they belong to:
+
+* A **statement ends at the end of the line**. `;` is accepted and ignored, so
+  nothing breaks if you write it.
+* **`int` is the number type**: 64-bit, wrapping on overflow, and the type of every
+  length and index. `i8`–`u64` exist for data that has a width; `as` converts.
+* **A string can contain its values**: `"hello, $name"`, `"${count + 1}"`,
+  `"\$5"` for a literal dollar sign.
+* **Operations are written on the value**: `text.trim()`, `text.split(",")`,
+  `parts.join("-")`, `items.push(x)`. `.len` is a property, so no parentheses.
+* **`fn main()`** runs and exits with status 0; **`fn main() -> int`** returns the
+  exit status.
+
+A failure is a value, and `else` handles it where the value is bound:
+
+```gable
+fn main() -> int {
+    let read = fs_read_text("tasks.txt") else {
+        eprint("cannot read tasks.txt: ${read.error}")
+        return 1
+    }
+    print("${read.text.len} bytes")
+    return 0
+}
+```
+
+The `else` block must end the statement (`return`, `break`, or `continue`), so
+after it the binding is the successful value and nothing has to re-check it.
+
+`examples/` contains complete programs, each of which the test suite runs and
+compares against its recorded output:
 
 | Program | Demonstrates |
 | --- | --- |
-| `hello.gable` | functions, strings, output |
-| `fibonacci.gable` | loops, `i64` arithmetic, helper functions |
-| `fizzbuzz.gable` | conditionals, `else if`, integer remainder |
-| `primes.gable` | nested loops, early returns |
-| `collatz.gable` | mixed-width arithmetic, `while` |
-| `gcd_lcm.gable` | mutable locals, division, function composition |
-| `structs.gable` | structs, field access, pass-by-value |
-| `strings.gable` | concatenation, length, search, conversion |
-| `args.gable` | command-line arguments |
-| `tasks.gable` | arrays, `for` loops, conversions |
-| `lists.gable` | growable lists, append, iteration, lists of structs |
+| `hello.gable` | the smallest program: a function, a string, output |
+| `collatz.gable` | variables, `while`, arithmetic, conditions |
+| `fizzbuzz.gable` | `if`/`else`, helper functions returning `bool`, building text |
+| `fibonacci.gable` | functions, ranges, a loop that keeps state |
+| `gcd_lcm.gable` | mutual helper calls, division and remainder |
+| `primes.gable` | nested loops, early `return`, a growable list |
+| `lists.gable` | `[T]`, `.push`, indexing, iteration, a list of structs |
+| `strings.gable` | interpolation, `.len`, `.trim`/`.split`/`.join`, `.find`, `.slice`, `parse_i64` |
+| `structs.gable` | structs as values, nested fields, returning a modified copy |
+| `tasks.gable` | a fixed array of structs, formatting a numbered list |
+| `args.gable` | `arg_count()` and `arg(i)` |
+| `read_file.gable` | reading a file, `let ... else`, exit statuses |
+| `records.gable` | turning text into structs and summarizing them |
+| `calculator.gable` | recursive descent over tokens: precedence and parentheses |
 
-Text that grows: a list collects pieces and `str_join` puts them together once.
+Text that grows: a list collects pieces and `.join` puts them together once.
 
 ```gable
-fn main() -> i32 {
-    var names: [str] = [];
-    for field in str_split("ada|grace|alan", "|") {
-        list_push(names, str_trim(field));
+fn main() {
+    let names: [str] = []
+    for field in "ada|grace|alan".split("|") {
+        names.push(field.trim())
     }
-    print(names.len);       // 3
-    print(names[1]);        // grace
-    print(str_join(names, ", "));
-    return 0;
+    print(names.len)                  // 3
+    print(names[1])                   // grace
+    print(names.join(", "))           // ada, grace, alan
 }
 ```
 
@@ -211,8 +301,11 @@ gable run tools/notes/notes.gable -- list
 `gable/rt.h`. Set `GABLE_RUNTIME_INCLUDE` to the directory containing `gable/rt.h`
 and `GABLE_RUNTIME_LIB` to `libgable_rt.a`.
 
-**`no 'main' function found`** — an executable needs `fn main() -> i32` in the root
-file or in one of the imported files.
+**`no 'main' function found`** — an executable needs `fn main()` or
+`fn main() -> int` in the root file or in one of the imported files.
+
+**`'main' must return 'int' (the exit status) or nothing at all, found 'i32'`** —
+`main` has no parameters and returns either nothing or `int`.
 
 **`internal error: the C compiler failed`** — the generated C did not compile.
 The compiler keeps the generated file and prints its path; please attach it to a

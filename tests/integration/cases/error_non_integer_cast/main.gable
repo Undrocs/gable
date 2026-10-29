@@ -1,5 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let value: i64 = "12" as i64;
     print(value);
-    return 0;
 }

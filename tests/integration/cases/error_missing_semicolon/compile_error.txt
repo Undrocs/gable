@@ -1,1 +1,1 @@
-expected ';'
+expected a line break after a declaration, found 'let'

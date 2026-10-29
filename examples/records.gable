@@ -1,0 +1,40 @@
+// Data processing: turn a block of comma-separated lines into records, keep the
+// ones that make sense, and summarize them. Reading text into structs is the
+// same shape whether the source is a CSV file or a JSON document.
+struct Row {
+    name: str
+    score: int
+}
+
+fn main() {
+    let text = "ada,12\ngrace,15\nnot a row\nhopper,9\n"
+    let rows: [Row] = []
+    var rejected = 0
+
+    for line in text.split("\n") {
+        if line.trim() == "" {
+            continue
+        }
+        let fields = line.split(",")
+        if fields.len != 2 {
+            rejected = rejected + 1
+            continue
+        }
+        let score = parse_i64(fields[1].trim()) else {
+            rejected = rejected + 1
+            continue
+        }
+        rows.push(Row(fields[0].trim(), score.value))
+    }
+
+    var total = 0
+    var best = rows[0]
+    for row in rows {
+        total = total + row.score
+        if row.score > best.score {
+            best = row
+        }
+    }
+    print("${rows.len} rows, $rejected rejected")
+    print("total $total, best ${best.name} with ${best.score}")
+}

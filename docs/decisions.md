@@ -70,7 +70,7 @@ form for optimisations that the typed tree cannot express.
 
 ---
 
-## 0003 — Semicolons are required; there is no automatic insertion
+## 0003 — Semicolons are required; there is no automatic insertion (superseded by 0023)
 
 **Decision.** Statements end with `;`, and the parser reports a missing semicolon
 at the point where one was expected. Newlines are whitespace.
@@ -180,7 +180,7 @@ no shadowing in the function namespace.
 
 ---
 
-## 0010 — `main` must be `fn main() -> i32`
+## 0010 — `main` must be `fn main() -> i32` (superseded by 0025)
 
 **Decision.** The entry point is fixed: no parameters, `i32` return, exactly one
 `main`.
@@ -521,3 +521,275 @@ shared handles, element stride, and reclamation. The integration cases `lists`,
 lists.gable` is executed by the suite, and the unit tests cover parsing `[T]`,
 element type checking, and the generated C for appends, indexing, assignment
 through a list element, and iteration.
+
+---
+
+## 0023 — A statement ends at a line break; `;` is accepted (supersedes 0003)
+
+**Decision.** A line break, `;`, `}`, or the end of the file ends a statement.
+`;` is accepted and ignored, so both styles parse to the same program.
+
+**Why.** The language is read far more often than it is written, and a
+semicolon at the end of every line is punctuation that carries no information:
+the line break already says where the statement ends. Beginners forget them, and
+the resulting error ("expected ';'") is about the compiler's convenience rather
+than their program.
+
+ADR 0003 chose required semicolons to keep parsing decisions local. That concern
+was answered rather than argued away: a line break ends a statement only where the
+statement *could* end — an expression that is unfinished (`1 +` at the end of a
+line) continues — and the parser's `endStatement` is the single place that decides
+it, so the rule is one function, not a set of special cases spread through the
+grammar.
+
+**Consequences.** Existing programs with semicolons keep working unchanged, which
+is why `;` was kept rather than removed. A program that wants two statements on one
+line needs `;`, and forgetting it produces `expected a line break after a
+declaration, found 'let'` with the note `a line break ends a statement; ';' is
+also accepted`. Every example, the notes tool, and the specification are written
+without semicolons so that the style a reader copies is the one the language is
+designed around.
+
+**Alternatives rejected.** (a) Keep semicolons required: works, but the punctuation
+is noise and the commonest beginner error stays. (b) Remove `;` from the lexer: it
+would break every existing program and every test case for no gain, and `;` is
+unambiguous where a line break is not (two statements on one line).
+
+**Verification.** `parser_tests` cover both spellings, `tests/integration/cases/
+error_missing_semicolon` still reports the same mistake, and every example,
+integration case, and the notes tool build and run without `;`.
+
+---
+
+## 0024 — `int` is the everyday integer; lengths and indices are `int`
+
+**Decision.** `int` is a signed 64-bit integer and the type a program uses unless
+it has a reason to name a width. `i64` is the same type under its width name; the
+literals and the built-ins use `int`, and `typeName` prints `int` for it.
+
+**Why.** A beginner's first question about `i32` vs `i64` has no answer that helps
+them write a task list, and the old default made the language annoying in exactly
+the way the simple cases matter: `.len` was `i64`, `arg(i)` took `i32`, a slice
+bound was `i32`, so `text.slice(0, text.len)` needed a conversion, and every
+example carried annotations it did not want. One type for counts, indices, and
+numbers removes a whole class of error from ordinary code.
+
+**Consequences.** The narrow widths remain for data that has a width (a value read
+from a file, a mask, a byte), and `as` is still the only way between them. The
+mismatch message now points at the fix: `Gable does not convert between number
+types on its own; write an explicit conversion with 'as', for example 'value as
+int'`. `print`, interpolation, and `str_of_i64` accept every integer width, so a
+narrow value can be shown without converting it first.
+
+**Alternatives rejected.** (a) Only `int`, no widths: the runtime already reads
+and writes them and the notes tool uses `u8` for flags; removing them would remove
+capability. (b) Make `int` 32-bit and keep `i64` for the rest: the same
+conversion problem on a different line. (c) Keep every count `i64` and let
+literals adapt: literal adaptation already worked, but `.len` still came back as a
+different type whenever it was stored.
+
+**Verification.** `semantic_tests` and `codegen_tests` cover `int` in each
+position; `tests/integration/cases/types`, `casts`, and `error_mixed_integer_types`
+exercise the rules; `examples/` uses `int` throughout, with `i64` only where a
+width is the point.
+
+---
+
+## 0025 — `main` needs no return type (supersedes 0010)
+
+**Decision.** `fn main()` is a complete program that exits with status 0;
+`fn main() -> int` returns the process exit status. No other signature is accepted.
+
+**Why.** A first program that must write `-> i32` and `return 0` before it can
+print a line teaches the reader two ideas (`main` is a function, a program has an
+exit status) as one ceremony. Most programs never look at their exit status and
+already have a natural `void` shape.
+
+**Consequences.** The two shapes both appear in the documentation, and the choice
+is stated where it matters: a program that can fail (the notes tool, the file
+example) declares `-> int` and returns 1 or 2 on failure, because a shell needs to
+know. The return-path analysis is unchanged; a `-> int` main must return on every
+path, including after an `if` that does not end in a `return`.
+
+**Alternatives rejected.** (a) Keep `-> i32` required: it is one more thing to
+explain before anything runs. (b) Allow `-> void` as a third spelling: `-> void`
+already means the same as omitting the type, so a third spelling adds nothing.
+(c) Default the exit status to the last expression: Gable has no block-valued
+expression, and a hidden exit status is exactly the kind of invisible rule this
+language avoids.
+
+**Verification.** `tests/integration/cases/exit_code` runs a `-> int` program and
+checks the status; `error_bad_main_signature` covers the rejected shapes; all 14
+examples run through the suite, and 12 of them use bare `fn main()`.
+
+---
+
+## 0026 — A string literal may contain its values
+
+**Decision.** `"hello $name"` and `"total: ${count + 1}"` build a string from its
+parts. `$name` takes a variable, parameter, or loop variable; `${ ... }` takes any
+expression; `\$` is a literal dollar sign; a `$` that starts neither is an
+ordinary character.
+
+**Why.** Joining text is one of the few things every program does, and
+`"hello, " + name + "!"` is a puzzle for a beginner: it hides the shape of the
+output in quotes and plus signs, puts spaces and punctuation at the edges of
+literals, and reads backwards as it grows. Writing the output as it should look is
+the difference between code that is read and code that is decoded.
+
+**Consequences.** Interpolation is defined as concatenation, not as a new kind of
+value: it allocates the same way `+` does, and the parts convert the way `print`
+converts them (`str`, `bool`, any integer). A struct, array, or list inside an
+interpolation is an error with the same explanation as `print` gives, which keeps
+one rule for "what can be shown". Nested interpolation is bounded at 8 levels and
+reported rather than allowed to consume stack. Because `$` was not previously
+special outside a literal, no existing program changes meaning; inside a literal,
+`\$` is the one escape a program may need to add, and `"$5"` still means `$5`.
+
+**Alternatives rejected.** (a) `"hello, {name}"` or `"hello, $"{name}`: more
+punctuation for the same idea, and a bare `{` inside ordinary text (JSON, for
+example) would need escaping. (b) `format("...", args)`: a function call with a
+format language inside a string, which is the thing being replaced. (c) No
+interpolation, `+` only: it works, and the examples showed how it reads.
+
+**Verification.** `lexer_tests` and `parser_tests` cover the three forms, the
+escape, and the nesting limit; `tests/integration/cases/interpolation` prints a
+matrix of values; `examples/` and `tools/notes` write every user-visible message
+this way.
+
+---
+
+## 0027 — Receiver calls: the value comes first
+
+**Decision.** The built-ins that operate on a value have a method spelling:
+`text.trim()`, `text.split(",")`, `text.find(needle)`, `text.slice(start, length)`,
+`parts.join(",")`, and `list.push(value)`. The free functions remain, and both
+spellings mean exactly the same call.
+
+**Why.** `str_trim(str_split(str_trim(line), ",")[0])` reads inside out, and the
+argument a reader cares about most — the thing being worked on — appears last.
+`line.trim().split(",")` reads left to right in the order the operations happen,
+and matches how a reader already says it. `.len` was already a property read
+without parentheses, so `text.len` next to `text.trim()` is consistent, and the
+compiler can say `'len' is a value, not a method; write '.len' without '()'`.
+
+**Consequences.** Methods exist only on `str` and lists, so there is no user-defined
+method, no inheritance, and no ambiguity about what a call means: the receiver's
+type selects the one built-in. Because the free function is still there, an error
+message can show either spelling, and existing programs do not change. A struct
+field called like a method is diagnosed as such (`'x' is a field of struct 'Point',
+not a method; read it without '()'`), which is the other half of the same rule.
+
+**Alternatives rejected.** (a) Methods only: it would break existing programs and
+remove the form that reads better when the value is a literal (`parse_i64(text)`).
+(b) A general method mechanism (`fn (str) trim`): user-defined methods need
+receiver syntax, ambiguity rules, and a story for structs; none of that is needed
+to make text operations readable. (c) Renaming the built-ins to `trim(text)`: the
+same call, the same reading problem.
+
+**Verification.** `semantic_tests` check that each method lowers to its built-in
+with the receiver as the first argument and that the argument types are checked;
+`diagnostic_tests` cover `.len()`, a field called as a method, and an unknown
+method; `tests/integration/cases/methods` runs both spellings and compares output.
+
+---
+
+## 0028 — `let x = value else { ... }` handles a failure where it is bound
+
+**Decision.** A binding whose initializer can report failure may handle the failure
+in place. The initializer's type must have a `bool` field named `ok`; the `else`
+block runs when `ok` is false, with the failed value in scope under the binding's
+name, and must end the statement with `return`, `break`, or `continue`.
+
+**Why.** Result structs (ADR 0018) are the right model — failures are values, not
+exceptions — but using one costs three lines and a temporary that shadows the
+value:
+
+```gable
+let read = fs_read_text(path)
+if !read.ok {
+    eprint("cannot read: " + read.error)
+    return 1
+}
+print(read.text)
+```
+
+The same code with `else` reads as one idea: bind the value, and if there is no
+value, do this instead. The binding that survives is the successful one, so the
+rest of the function never has to re-check it.
+
+**Consequences.** The check is structural (`ok: bool`), not a built-in type list, so
+a program's own result struct works and the language gains no new type concept.
+Requiring the block to leave the statement is what makes the binding safe: there is
+no path on which `read` holds a failure. The three failures have their own
+messages — no `ok` field, an `ok` that is not `bool`, and an `else` block that can
+fall through — so the fix is stated in the error. `let` stays immutable; a failure
+that is handled and then ignored is written with `if`, not with `else`.
+
+**Alternatives rejected.** (a) Exceptions or `try`: invisible control flow, and
+the runtime and every call would have to carry it. (b) `?` that returns the failure
+from the enclosing function: it only fits functions with the same result type, so
+it cannot be used in `main` or in a helper that returns a string. (c) A `match`
+construct: pattern matching is deliberately not in the language yet, and a
+single-case form would be a special case of a feature that does not exist. (d)
+Requiring `if` after the binding: that is the code above, which is what the feature
+is for.
+
+**Verification.** `tests/integration/cases/file_guard` reads a present file, a
+missing file, and a file holding text that is not a number, checking all three
+messages and exit statuses; `semantic_tests` cover the three error shapes and the
+`break`/`continue` forms; `tools/notes` uses the feature for every file operation,
+and its 83 tests run against it.
+
+---
+
+## 0029 — The formatter changes whitespace and nothing else
+
+**Decision.** `gable fmt` rewrites indentation, the spaces between tokens on a
+line, trailing whitespace, and runs of blank lines. It never moves a token to
+another line, never adds or removes a token, and never re-wraps an expression,
+a call, or a list. Comments are preserved: a line comment stays on its line, and a
+block comment keeps its own text, including the line breaks inside it. A file that
+does not parse is reported and left alone. `--check` writes nothing and reports
+through the exit status.
+
+**Why.** In Gable a line break ends a statement (ADR 0023). A formatter that
+re-wrapped code would have to decide where a statement ends, and any disagreement
+between it and the parser changes the meaning of the program it was asked to
+format. Restricting the formatter to whitespace *within* lines removes that risk
+entirely: the token sequence is the same before and after, and the file's meaning
+is a function of that sequence and its line breaks, both of which are preserved.
+
+The second reason is that most of what a re-wrapping formatter is for — fitting an
+expression onto one line, choosing where to break a long call — is a preference,
+and a preference that churns diffs. Gable's formatting question is narrower: is
+there one obvious indentation and one obvious spacing? There is, and that is what
+the command enforces.
+
+**Consequences.** A long line stays long; the formatter never shortens it. The
+programmer decides where lines break, which is also where statements end, so the
+file remains readable in the order it was written. Formatting is idempotent, which
+`--check` depends on and which the unit tests assert for every rule. The formatter
+works on a line at a time and keeps a brace/parenthesis/bracket depth, so it is
+about 300 lines and has no dependency on the parser beyond "the file must parse
+first" — the CLI runs the front end before it writes, and refuses on any error, so
+a half-typed file is never rewritten.
+
+**Alternatives rejected.** (a) Format from the AST and re-print the tree: comments
+are not in the AST, so a formatter built from it would silently delete every
+comment in the file. (b) Token-stream formatting that also decides line breaks:
+the statement rule makes that a semantic decision, and it would be a second
+implementation of the parser's line-break rule. (c) Re-styling with an external
+tool: a dependency and a foreign policy for the one thing this language can define
+for itself. (d) No formatter at all: the style in the examples and documentation
+then has to be maintained by hand, which is where the inconsistencies in the 0.2
+examples came from.
+
+**Verification.** `tests/unit/format_tests.cpp` covers indentation, alignment of a
+closing brace, blank-line folding, operator spacing, prefix versus binary `-`,
+calls and indexes, multi-line lists, line and block comments, strings (including an
+interpolation), idempotence, and both unterminated-input errors.
+`tests/unit/cli_tests.cpp` covers `--check` (writes nothing, exit status 1), a
+rewrite that lands through the atomic path, and a file with a syntax error that is
+left byte-for-byte unchanged. The integration suite runs `gable fmt --check` on
+every example, so all of them are formatted and stay that way.

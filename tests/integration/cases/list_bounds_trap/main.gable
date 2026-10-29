@@ -1,7 +1,6 @@
-fn main() -> i32 {
+fn main() {
     var values: [i32] = [7];
     list_push(values, 8);
     print(values[1]);
     print(values[2]);
-    return 0;
 }

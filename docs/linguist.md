@@ -21,9 +21,9 @@ GitHub's Languages section is produced by Linguist from the **default branch**.
 * `* text=auto eol=lf` — line endings are normalised, so re-cloning on another
   platform cannot change a file's byte count.
 
-As of this commit the repository contains 27 `.cpp`, 24 `.h`, and 5 `.c` files,
+As of this commit the repository contains 32 `.cpp`, 25 `.h`, and 11 `.c` files,
 so C++ dominates the reported composition, with CMake and C making up the rest.
-The 65 `.gable` files — examples, the notes tool, and test cases — are not
+The 86 `.gable` files — examples, the notes tool, and test cases — are not
 counted.
 
 Practical consequences:

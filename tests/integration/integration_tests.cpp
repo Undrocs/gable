@@ -311,8 +311,10 @@ int main(int argc, char** argv) {
   }
   const std::size_t caseCount = cases.size();
 
-  // Examples must compile, run, and exit successfully. Their printed output is
-  // not compared here because the case suite covers exact output.
+  // Examples must compile, run, and exit successfully. When the examples
+  // directory has an `expected/<name>.txt`, the output is compared exactly as
+  // well, so an example is a test of the result it documents, not just of the
+  // compiler accepting it.
   std::size_t exampleCount = 0;
   if (argc > 3) {
     for (const fs::path& source : sortedSources(argv[3])) {
@@ -322,6 +324,27 @@ int main(int argc, char** argv) {
       if (!run.started || run.exitCode != 0 || !run.standardError.empty()) {
         runner.fail(name, "exit status " + std::to_string(run.exitCode) +
                               describe("stderr", run.standardError));
+        continue;
+      }
+      // The examples are also the formatter's corpus: `gable fmt --check` must
+      // find nothing to change, so the style the documentation shows is the
+      // style the formatter produces.
+      const gable::ProcessResult formatted = runner.runCompiler({"fmt", "--check", source.string()});
+      if (!formatted.started || formatted.exitCode != 0) {
+        runner.fail(name, "is not formatted: " + formatted.standardOutput +
+                              describe("stderr", formatted.standardError));
+        continue;
+      }
+      const fs::path expected =
+          fs::path(argv[3]) / "expected" / (source.stem().string() + ".txt");
+      if (!fs::exists(expected)) {
+        runner.fail(name, "has no " + expected.string() + " recording its output");
+        continue;
+      }
+      const std::string wanted = readFile(expected);
+      if (run.standardOutput != wanted) {
+        runner.fail(name, "output differs from " + expected.string() + "\n--- expected\n" +
+                              wanted + "--- actual\n" + run.standardOutput);
         continue;
       }
       runner.pass();

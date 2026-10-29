@@ -28,11 +28,15 @@ class Lexer {
   char advance();
   bool match(char expected);
 
-  void skipWhitespaceAndComments();
+  /// Skips whitespace and comments; returns true when a line break was skipped,
+  /// which ends a statement in Gable.
+  bool skipWhitespaceAndComments();
   void scanToken(std::vector<Token>& tokens);
   void scanNumber(std::vector<Token>& tokens);
   void scanIdentifier(std::vector<Token>& tokens);
   void scanString(std::vector<Token>& tokens);
+  bool enterInterpolation(std::size_t spanBegin);
+  bool scanInterpolation(std::vector<Token>& tokens);
 
   SourceSpan spanFrom(std::size_t begin) const { return SourceSpan{begin, offset_}; }
 
@@ -40,6 +44,8 @@ class Lexer {
   Diagnostics& diagnostics_;
   std::uint32_t file_;
   std::size_t offset_ = 0;
+  /// How many interpolated strings are being scanned right now.
+  int interpolationDepth_ = 0;
 };
 
 }  // namespace gable

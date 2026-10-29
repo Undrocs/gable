@@ -69,8 +69,36 @@ before new surface area.
   arguments, uses structs and strings, and reads and writes a text file.
 
 Verified by: 215 unit tests, 58 integration cases, 10 examples, 83 notes-tool
-tests, and 82 runtime file tests, all passing in Debug and under
+tests, and 82 runtime file tests at the time, all passing in Debug and under
 AddressSanitizer/UBSan on Linux, plus the compiler suites on Windows with MSVC.
+
+## Milestone 5b — Readable by default (language 0.3) · complete
+
+The 0.2 language worked but read like a compiler's idea of a language: a semicolon
+ended every line, `i32` versus `i64` had to be decided before the first line, a
+program that prints one line had to return a status, and joining text meant
+`"hello, " + name + "!"`. This milestone is about the code a reader meets first.
+
+* A statement ends at a line break; `;` is accepted and ignored (ADR 0023).
+* `int` is the everyday 64-bit integer and the type of every length and index;
+  the narrow widths remain for data that has a width (ADR 0024).
+* `fn main()` is a complete program; `fn main() -> int` returns a status (ADR 0025).
+* String interpolation: `"hello $name"`, `"${count + 1}"`, `"\$5"` (ADR 0026).
+* Receiver calls: `text.trim()`, `text.split(",")`, `parts.join(",")`,
+  `items.push(x)`, with `.len` as a property (ADR 0027).
+* `let value = fallible() else { ... }` handles a failure where the value is bound
+  (ADR 0028).
+* A literal whose elements agree is a growable list, so `let names = ["ada"]` can
+  be appended to.
+* Growable lists, memory reclamation, `.split`/`.join`, and file results are used
+  together by `tools/notes`; the 14 examples are rewritten in this style and each
+  one's output is recorded in `examples/expected/` and compared on every test run.
+* Diagnostics name the mistake and the fix: assignment in a condition, `.len()`,
+  a field called as a method, an unknown method, a missing number conversion, an
+  assignment to an undeclared name.
+
+Verified by: 294 unit tests, 65 integration cases, 14 examples with recorded
+output, 83 notes-tool tests, and 107 runtime tests.
 
 ## Milestone 6 — LLVM backend
 
@@ -108,10 +136,16 @@ Acceptance: a program that needs growable collections and bounded memory use can
 written without workarounds, and the specification documents every construct
 used.
 
-## Milestone 8 — Developer experience
+## Milestone 8 — Developer experience · partially complete
 
-* `gable fmt` with a stable formatting policy.
-* Tree-sitter grammar and editor support.
+* `gable fmt` with a stable formatting policy — **complete**: whitespace-only,
+  comment-preserving, idempotent, checked in CI by running `fmt --check` on every
+  example (ADR 0029).
+* Tree-sitter grammar and editor support — **partly complete**: a TextMate
+  grammar in `tools/editors` covers comments, strings with interpolation,
+  literals, keywords, types, built-ins, and names, and the unit tests check that
+  every keyword, type, and built-in appears in it. A tree-sitter grammar and a
+  language server are not started.
 * Language server reusing `gable_compiler` (diagnostics, hover, go-to-definition).
 * Debug information for Gable source, mapped through the backend.
 * Release process and documented versioning.
@@ -136,9 +170,9 @@ passes the full test suite, and the bootstrap chain is documented.
 
 ## Not planned yet
 
-Generics, traits, pattern matching, ownership/borrowing, garbage collection,
-async/await, threads, macros, reflection, package registry, GUI frameworks, GPU
-compilation, kernel support.
+Generics, traits, pattern matching, ownership/borrowing, async/await, threads,
+macros, reflection, package registry, GUI frameworks, GPU compilation, kernel
+support.
 
 Each of these is a significant design problem. They will be considered when the
 language has a stable base and a demonstrated need, not because another language

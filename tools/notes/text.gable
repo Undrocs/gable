@@ -5,42 +5,42 @@
 // tool never walks a string byte by byte.
 
 struct StoredTask {
-    valid: bool,
-    done: bool,
-    title: str,
+    valid: bool
+    done: bool
+    title: str
 }
 
 /// Parses one stored line. Anything that does not have exactly the shape the
 /// file format describes is reported as invalid instead of being guessed at.
 fn parse_stored(line: str) -> StoredTask {
-    let fields = str_split(line, "\t");
+    let fields = line.split("\t")
     if fields.len != 2 {
-        return StoredTask(false, false, "");
+        return StoredTask(false, false, "")
     }
-    let flag = fields[0];
+    let flag = fields[0]
     // The flag is exactly one character and exactly "0" or "1": a line such as
     // "x<TAB>task" is corruption, not a pending task.
     if flag != "0" && flag != "1" {
-        return StoredTask(false, false, "");
+        return StoredTask(false, false, "")
     }
-    let title = fields[1];
+    let title = fields[1]
     if !is_valid_title(title) {
-        return StoredTask(false, false, "");
+        return StoredTask(false, false, "")
     }
-    return StoredTask(true, flag == "1", title);
+    return StoredTask(true, flag == "1", title)
 }
 
 /// A title is stored on one line, so it must be non-empty and free of the
 /// characters that would change the shape of the file when it is read back.
 fn is_valid_title(title: str) -> bool {
     if title.len == 0 {
-        return false;
+        return false
     }
-    if str_find(title, "\t").ok {
-        return false;
+    if title.find("\t").ok {
+        return false
     }
-    if str_find(title, "\n").ok {
-        return false;
+    if title.find("\n").ok {
+        return false
     }
-    return true;
+    return true
 }

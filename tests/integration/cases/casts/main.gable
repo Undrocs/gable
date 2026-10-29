@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let big: i64 = 4294967298;
     let narrowed: i32 = big as i32;
     print(narrowed);
@@ -17,5 +17,4 @@ fn main() -> i32 {
     let divisor: i64 = 0;
     let quotient: i64 = 10 as i64;
     print(quotient / divisor + 0);
-    return 0;
 }

@@ -1,0 +1,33 @@
+// A list and a string answer the same way: the operation follows the value.
+struct Task {
+    title: str
+    done: bool
+}
+
+fn render(tasks: [Task]) -> str {
+    var lines: [str] = []
+    for task in tasks {
+        var mark = " "
+        if task.done {
+            mark = "x"
+        }
+        lines.push("${task.title} (${mark})")
+    }
+    return lines.join(", ")
+}
+
+fn main() {
+    var tasks: [Task] = []
+    tasks.push(Task("write", false))
+    tasks.push(Task("review", true))
+    print(tasks.len)
+    print(render(tasks))
+
+    let row = "  ada,grace,hopper  "
+    let names = row.trim().split(",")
+    print(names.len)
+    print(names.join(" & "))
+    let found = row.find("grace")
+    print(found.index)
+    print(row.slice(2, 3).text)
+}

@@ -1,0 +1,3 @@
+area 12 at (1, 2)
+moved to (11, 22)
+the original is unchanged: (1, 2)

@@ -1,0 +1,19 @@
+// String interpolation: $name inserts a value, ${expression} inserts a result.
+struct Task {
+    title: str
+    done: bool
+}
+
+fn main() {
+    let task = Task("write the report", false)
+    let count = 3
+    let name = "Ada"
+
+    print("hello, $name")
+    print("$count tasks, ${count + 1} after today")
+    print("done: ${task.done}, and ${task.title}")
+    print("costs $5 and $name")
+    print("escaped: \$name")
+    print("adjacent: $name$count")
+    print("${name}${name}")
+}

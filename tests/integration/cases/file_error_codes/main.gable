@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     // The argument is a path in the case's scratch directory, not a directory.
     let path: str = arg(1) + ".codes";
 
@@ -31,5 +31,4 @@ fn main() -> i32 {
     let replaced = fs_write_text_atomic(path, "two\n");
     print(replaced.ok);
     print(fs_read_text(path).text);
-    return 0;
 }

@@ -1,0 +1,3 @@
+usage: gable run examples/read_file.gable -- <path>
+with no path, this reads a file that does not exist:
+the read failed, so the 'else' block ran: ok = false

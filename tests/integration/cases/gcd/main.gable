@@ -9,9 +9,8 @@ fn gcd(a0: i64, b0: i64) -> i64 {
     return a;
 }
 
-fn main() -> i32 {
+fn main() {
     print(gcd(1071, 462));
     print(gcd(17, 5));
     print(gcd(48, 18));
-    return 0;
 }

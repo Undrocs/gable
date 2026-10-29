@@ -74,6 +74,9 @@ class Type {
   static constexpr Type i16() { return Type(TypeKind::I16); }
   static constexpr Type i32() { return Type(TypeKind::I32); }
   static constexpr Type i64() { return Type(TypeKind::I64); }
+  /// `int`, the everyday integer and the type of an unannotated integer
+  /// literal. It is the same 64-bit signed type as `i64`.
+  static constexpr Type intType() { return Type(TypeKind::I64); }
   static constexpr Type u8() { return Type(TypeKind::U8); }
   static constexpr Type u16() { return Type(TypeKind::U16); }
   static constexpr Type u32() { return Type(TypeKind::U32); }
@@ -232,7 +235,8 @@ using StmtPtr = std::unique_ptr<Stmt>;
 
 struct Stmt {
   enum class Kind {
-    Let,       // slot, type, isMutable, value = initializer (may be null)
+    Let,       // slot, type, isMutable, value = initializer (may be null),
+               // optional elseBody guarded by the `ok` field at okField
     Assign,    // target = lvalue, value = new value
     Expr,      // value = expression statement
     Return,    // value = returned value, or null for `return;`
@@ -265,6 +269,8 @@ struct Stmt {
   std::vector<StmtPtr> body;
   std::vector<StmtPtr> elseBody;
   bool hasElse = false;
+  /// Let: index of the `ok` field whose value decides whether `elseBody` runs.
+  std::uint32_t okField = 0;
 };
 
 struct LocalVariable {

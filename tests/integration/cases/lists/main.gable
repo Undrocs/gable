@@ -17,7 +17,7 @@ fn names(items: [Item]) -> [str] {
     return result;
 }
 
-fn main() -> i32 {
+fn main() {
     var items: [Item] = [];
     add(items, "bolts", 12);
     add(items, "nuts", 30);
@@ -39,7 +39,7 @@ fn main() -> i32 {
     }
 
     // Growth: the list reallocates as it fills, and the contents survive.
-    var numbers: [i32] = [];
+    var numbers: [int] = [];
     for i in 0..1000 {
         list_push(numbers, i * 2);
     }
@@ -56,5 +56,4 @@ fn main() -> i32 {
     // A list literal uses the type of the binding.
     let fixed: [str] = ["x", "y"];
     print(fixed.len);
-    return 0;
 }

@@ -103,7 +103,7 @@ GABLE_TEST(robustness_survives_mutations_of_a_valid_program) {
 }
 
 GABLE_TEST(robustness_rejects_excessive_expression_nesting) {
-  std::string source = "fn main() -> i32 { let a: i32 = ";
+  std::string source = "fn main() { let a: i32 = ";
   const int depth = 5000;
   for (int i = 0; i < depth; ++i) {
     source += "(";
@@ -120,7 +120,7 @@ GABLE_TEST(robustness_rejects_excessive_expression_nesting) {
 }
 
 GABLE_TEST(robustness_rejects_excessive_block_nesting) {
-  std::string source = "fn main() -> i32 { ";
+  std::string source = "fn main() -> int { ";
   const int depth = 5000;
   for (int i = 0; i < depth; ++i) {
     source += "{ ";
@@ -136,7 +136,7 @@ GABLE_TEST(robustness_rejects_excessive_block_nesting) {
 }
 
 GABLE_TEST(robustness_accepts_deeply_but_reasonably_nested_expressions) {
-  std::string source = "fn main() -> i32 { let a: i32 = ";
+  std::string source = "fn main() { let a: i32 = ";
   const int depth = 100;
   for (int i = 0; i < depth; ++i) {
     source += "(";
@@ -145,7 +145,7 @@ GABLE_TEST(robustness_accepts_deeply_but_reasonably_nested_expressions) {
   for (int i = 0; i < depth; ++i) {
     source += ")";
   }
-  source += "; return a; }";
+  source += "; print(a); }";
 
   const gabletest::Analysis analysis = gabletest::analyze(source);
   GABLE_CHECK(analysis.ok());
@@ -155,15 +155,30 @@ GABLE_TEST(robustness_handles_unterminated_constructs) {
   analyzeWithoutCrashing("fn");
   analyzeWithoutCrashing("fn main(");
   analyzeWithoutCrashing("fn main() -> {");
-  analyzeWithoutCrashing("fn main() -> i32 { if");
-  analyzeWithoutCrashing("fn main() -> i32 { while true {");
+  analyzeWithoutCrashing("fn main() -> int { if");
+  analyzeWithoutCrashing("fn main() -> int { while true {");
   analyzeWithoutCrashing("\"unterminated");
   analyzeWithoutCrashing("/* unterminated");
-  analyzeWithoutCrashing("fn main() -> i32 { let x: i32 = 1 + ");
+  analyzeWithoutCrashing("fn main() -> int { let x: i32 = 1 + ");
+}
+
+GABLE_TEST(robustness_handles_malformed_method_calls) {
+  analyzeWithoutCrashing("fn main() { let a: int = 1; a.push(2, 3, 4); }");
+  analyzeWithoutCrashing("fn main() { let a: int = 1; a.trim(); }");
+  analyzeWithoutCrashing("fn main() { let a: int = 1; a.b.c(); }");
+  analyzeWithoutCrashing("fn main() { let a: str = \"x\"; a.slice(,2); }");
+}
+
+GABLE_TEST(robustness_handles_malformed_interpolation) {
+  analyzeWithoutCrashing("fn main() { print(\"$\"); }");
+  analyzeWithoutCrashing("fn main() { print(\"${}\") ; }");
+  analyzeWithoutCrashing("fn main() { print(\"${1 + 2\"); }");
+  analyzeWithoutCrashing("fn main() { print(\"${ \"); }");
+  analyzeWithoutCrashing("fn main() { print(\"${${${${${${${${${1}${1}${1}${1}${1}${1}${1}${1}${1}${1}\"); }");
 }
 
 GABLE_TEST(robustness_rejects_null_bytes_in_source) {
-  std::string source = "fn main() -> i32 { return 0; }";
+  std::string source = "fn main() -> int { return 0; }";
   source.push_back('\0');
   source += "garbage";
   const gabletest::Analysis analysis = gabletest::analyze(source);
@@ -174,15 +189,15 @@ GABLE_TEST(robustness_rejects_null_bytes_in_source) {
 GABLE_TEST(robustness_handles_very_long_identifier) {
   const std::string name(10000, 'a');
   const std::string source = "fn " + name + "() -> i32 { return 0; }\n"
-                             "fn main() -> i32 { return " + name + "(); }\n";
+                             "fn main() { print(" + name + "()); }\n";
   const gabletest::Analysis analysis = gabletest::analyze(source);
   GABLE_CHECK(analysis.ok());
 }
 
 GABLE_TEST(robustness_handles_large_integer_literals) {
-  analyzeWithoutCrashing("fn main() -> i32 { return 99999999999999999999999999; }");
-  analyzeWithoutCrashing("fn main() -> i32 { return 0xFFFFFFFFFFFFFFFFFF; }");
-  analyzeWithoutCrashing("fn main() -> i32 { return 0b111111111111111111111111111111111111111111111111111111111111111111; }");
+  analyzeWithoutCrashing("fn main() -> int { return 99999999999999999999999999; }");
+  analyzeWithoutCrashing("fn main() -> int { return 0xFFFFFFFFFFFFFFFFFF; }");
+  analyzeWithoutCrashing("fn main() -> int { return 0b111111111111111111111111111111111111111111111111111111111111111111; }");
 }
 
 // Left-associative operator chains are parsed in a loop, so the recursion guard
@@ -195,7 +210,7 @@ GABLE_TEST(robustness_rejects_very_long_operator_chains) {
     chain += " + 1";
   }
   const gabletest::Analysis sum =
-      gabletest::analyze("fn main() -> i32 {\n    let x: i64 = " + chain + ";\n    return 0;\n}\n");
+      gabletest::analyze("fn main() -> int {\n    let x: i64 = " + chain + ";\n    return 0;\n}\n");
   GABLE_CHECK(!sum.ok());
   GABLE_CHECK(gabletest::mentions(sum, "expression is too large"));
 
@@ -206,7 +221,7 @@ GABLE_TEST(robustness_rejects_very_long_operator_chains) {
     comparisons += " && true";
   }
   const gabletest::Analysis logical = gabletest::analyze(
-      "fn main() -> i32 {\n    let x: bool = " + comparisons + ";\n    return 0;\n}\n");
+      "fn main() -> int {\n    let x: bool = " + comparisons + ";\n    return 0;\n}\n");
   GABLE_CHECK(!logical.ok());
   GABLE_CHECK(gabletest::mentions(logical, "too large") ||
               gabletest::mentions(logical, "nested too deeply"));
@@ -218,7 +233,7 @@ GABLE_TEST(robustness_rejects_deeply_nested_array_types) {
     type = "[" + type + "; 1]";
   }
   const gabletest::Analysis analysis = gabletest::analyze(
-      "fn main() -> i32 {\n    let x: " + type + ";\n    return 0;\n}\n");
+      "fn main() -> int {\n    let x: " + type + ";\n    return 0;\n}\n");
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(gabletest::mentions(analysis, "nested too deeply"));
 }
@@ -226,7 +241,7 @@ GABLE_TEST(robustness_rejects_deeply_nested_array_types) {
 GABLE_TEST(robustness_rejects_long_else_if_chains) {
   // `else if` links a chain of statements without passing through a block, so
   // each link is one more frame in the parser, the analyser, and the destructor.
-  std::string program = "fn main() -> i32 {\n    if false { return 1; }\n";
+  std::string program = "fn main() -> int {\n    if false { return 1; }\n";
   for (int i = 0; i < 20000; ++i) {
     program += "    else if false { return 0; }\n";
   }
@@ -249,7 +264,7 @@ GABLE_TEST(robustness_rejects_more_than_the_source_file_limit) {
     root += "import \"" + std::string(name) + "\";\n";
     files[name] = "fn f" + std::to_string(index) + "() -> i32 { return 0; }\n";
   }
-  files["main.gable"] = root + "fn main() -> i32 { return f0(); }\n";
+  files["main.gable"] = root + "fn main() -> int { return f0(); }\n";
 
   const gabletest::Analysis analysis = gabletest::analyzeProject(files, "main.gable");
   GABLE_CHECK(!analysis.ok());
@@ -275,9 +290,32 @@ GABLE_TEST(robustness_rejects_deeply_nested_import_chains) {
     text += "fn f" + std::to_string(index) + "() -> i32 { return 0; }\n";
     files[name] = text;
   }
-  files["main.gable"] = "import \"f00000.gable\";\nfn main() -> i32 { return f0(); }\n";
+  files["main.gable"] = "import \"f00000.gable\";\nfn main() -> int { return f0(); }\n";
 
   const gabletest::Analysis analysis = gabletest::analyzeProject(files, "main.gable");
   GABLE_CHECK(!analysis.ok());
   GABLE_CHECK(gabletest::mentions(analysis, "nested more than 64 levels deep"));
+}
+
+// A statement the parser cannot place must still make progress. Before the guard
+// in `parseBlock`, a `+=` produced two million copies of the same diagnostic and
+// only stopped when the node budget ran out.
+GABLE_TEST(robustness_compound_assignment_reports_once) {
+  analyzeWithoutCrashing(
+      "fn main() {\n"
+      "  var x = 1\n"
+      "  x += 2\n"
+      "  x -= 3\n"
+      "  x *= 4\n"
+      "  print(x)\n"
+      "}\n");
+  const gabletest::Analysis analysis = gabletest::analyze(
+      "fn main() {\n"
+      "  var x = 1\n"
+      "  x += 2\n"
+      "  print(x)\n"
+      "}\n");
+  GABLE_CHECK(!analysis.ok());
+  GABLE_CHECK(gabletest::mentions(analysis, "Gable has no '+=' operator"));
+  GABLE_CHECK(analysis.errorCount() <= 2);
 }

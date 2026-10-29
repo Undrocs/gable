@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() -> int {
     print("exiting");
     return 3;
 }

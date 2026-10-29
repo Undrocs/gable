@@ -85,6 +85,8 @@ class SemanticAnalyzer {
   ir::ExprPtr checkExpr(const ast::Expr& expr, std::optional<ir::Type> expected);
   ir::ExprPtr checkUnary(const ast::Expr& expr, std::optional<ir::Type> expected);
   ir::ExprPtr checkBinary(const ast::Expr& expr, std::optional<ir::Type> expected);
+  /// Reports two operands that cannot be used together, and says what to write.
+  void reportOperandMismatch(SourceSpan span, BinaryOp op, ir::Type left, ir::Type right);
   ir::ExprPtr checkCall(const ast::Expr& expr);
   ir::ExprPtr checkBuiltinCall(const ast::Expr& expr, const BuiltinInfo& builtin);
   ir::ExprPtr checkListPush(const ast::Expr& expr);
@@ -94,6 +96,14 @@ class SemanticAnalyzer {
   ir::ExprPtr checkIndex(const ast::Expr& expr);
   ir::ExprPtr checkCast(const ast::Expr& expr);
   ir::ExprPtr checkArrayLiteral(const ast::Expr& expr, std::optional<ir::Type> expected);
+  /// `"a $b c"` becomes string concatenation, converting integers and booleans
+  /// to text with the same built-ins a program would call itself.
+  ir::ExprPtr checkInterpolatedString(const ast::Expr& expr);
+  /// `values.push(x)`, `text.trim()`: the built-in operation with the receiver as
+  /// its first argument.
+  ir::ExprPtr checkMethodCall(const ast::Expr& expr);
+  void reportUnknownMethod(const ast::Expr& expr, ir::Type receiverType);
+  void noteAvailableMethods(SourceSpan span, ir::Type receiverType);
   ir::ExprPtr checkIntegerLiteral(const ast::Expr& expr, std::optional<ir::Type> expected);
 
   /// Resolves an assignment target and reports expressions that are not
@@ -129,6 +139,9 @@ class SemanticAnalyzer {
   std::string fieldListForHint(const ir::StructInfo& info) const;
   std::string nameOfSlot(std::uint32_t slot) const;
   bool alwaysReturns(const std::vector<ir::StmtPtr>& statements) const;
+  /// True when the statements leave the function or the loop on every path, which
+  /// is what the `else` block of a fallible binding has to do.
+  bool alwaysDiverges(const std::vector<ir::StmtPtr>& statements) const;
   bool stmtAlwaysReturns(const ir::Stmt& stmt) const;
 
   Diagnostics& diagnostics_;

@@ -23,23 +23,23 @@ struct FileReadResult {
     ok: bool,
     text: str,
     error: str,
-    code: i32,
+    code: int,
 }
 
 struct FileWriteResult {
     ok: bool,
     error: str,
-    code: i32,
+    code: int,
 }
 
 struct ParseResult {
     ok: bool,
-    value: i64,
+    value: int,
 }
 
 struct FindResult {
     ok: bool,
-    index: i64,
+    index: int,
 }
 
 struct SliceResult {

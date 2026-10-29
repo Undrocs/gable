@@ -20,7 +20,8 @@ constexpr KeywordEntry kKeywords[] = {
     {"while", TokenKind::KwWhile},   {"true", TokenKind::KwTrue},
     {"false", TokenKind::KwFalse},   {"i8", TokenKind::KwI8},
     {"i16", TokenKind::KwI16},       {"i32", TokenKind::KwI32},
-    {"i64", TokenKind::KwI64},       {"u8", TokenKind::KwU8},
+    {"i64", TokenKind::KwI64},       {"int", TokenKind::KwInt},
+    {"u8", TokenKind::KwU8},
     {"u16", TokenKind::KwU16},       {"u32", TokenKind::KwU32},
     {"u64", TokenKind::KwU64},       {"bool", TokenKind::KwBool},
     {"str", TokenKind::KwStr},       {"void", TokenKind::KwVoid},
@@ -29,6 +30,10 @@ constexpr KeywordEntry kKeywords[] = {
     {"continue", TokenKind::KwContinue},
     {"for", TokenKind::KwFor},       {"in", TokenKind::KwIn},
 };
+
+/// An interpolated string inside an interpolated string is legal but useless
+/// beyond a few levels; the limit keeps the recursive scan bounded.
+constexpr int kMaxInterpolationDepth = 8;
 
 bool isAsciiDigit(char c) { return c >= '0' && c <= '9'; }
 
@@ -113,6 +118,9 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Identifier: return "identifier";
     case TokenKind::IntegerLiteral: return "integer literal";
     case TokenKind::StringLiteral: return "string literal";
+    case TokenKind::StringStart: return "string literal";
+    case TokenKind::StringPart: return "string literal";
+    case TokenKind::StringEnd: return "string literal";
     case TokenKind::KwFn: return "'fn'";
     case TokenKind::KwLet: return "'let'";
     case TokenKind::KwVar: return "'var'";
@@ -133,6 +141,7 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::KwI16: return "'i16'";
     case TokenKind::KwI32: return "'i32'";
     case TokenKind::KwI64: return "'i64'";
+    case TokenKind::KwInt: return "'int'";
     case TokenKind::KwU8: return "'u8'";
     case TokenKind::KwU16: return "'u16'";
     case TokenKind::KwU32: return "'u32'";
@@ -191,10 +200,14 @@ bool Lexer::match(char expected) {
   return true;
 }
 
-void Lexer::skipWhitespaceAndComments() {
+bool Lexer::skipWhitespaceAndComments() {
+  bool sawLineBreak = false;
   for (;;) {
     const char c = peek();
     if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      if (c == '\n') {
+        sawLineBreak = true;
+      }
       ++offset_;
       continue;
     }
@@ -224,7 +237,7 @@ void Lexer::skipWhitespaceAndComments() {
       }
       continue;
     }
-    return;
+    return sawLineBreak;
   }
 }
 
@@ -244,11 +257,17 @@ std::vector<Token> Lexer::tokenize() {
   }
 
   while (!atEnd()) {
-    skipWhitespaceAndComments();
+    const bool lineBreak = skipWhitespaceAndComments();
     if (atEnd()) {
       break;
     }
+    const std::size_t before = tokens.size();
     scanToken(tokens);
+    // Only the first token of a scan follows the line break: the tokens inside
+    // an interpolated string are part of the same expression.
+    if (tokens.size() > before) {
+      tokens[before].newlineBefore = lineBreak;
+    }
   }
 
   Token eof;
@@ -453,6 +472,22 @@ void Lexer::scanString(std::vector<Token>& tokens) {
   ++offset_;  // Consume the opening quote.
   std::string value;
   bool terminated = false;
+  bool interpolated = false;
+  // Start of the text currently being collected, used for the span of a part.
+  std::size_t textStart = offset_;
+
+  // Text between interpolations is a token of its own, so the parser sees
+  // `StringStart`, the tokens of an expression, `StringPart`, and so on. The
+  // lexer therefore does not need to understand expressions.
+  auto flushText = [&]() {
+    Token token;
+    token.kind = interpolated ? TokenKind::StringPart : TokenKind::StringStart;
+    token.span = SourceSpan{textStart, offset_};
+    token.text = source_.text().substr(textStart, offset_ - textStart);
+    token.stringValue = value;
+    value.clear();
+    tokens.push_back(std::move(token));
+  };
 
   while (!atEnd()) {
     const std::size_t charStart = offset_;
@@ -463,6 +498,34 @@ void Lexer::scanString(std::vector<Token>& tokens) {
     }
     if (c == '\n') {
       break;
+    }
+    if (c == '$') {
+      if (peek() == '{') {
+        if (!enterInterpolation(charStart)) {
+          return;
+        }
+        ++offset_;  // '{'
+        flushText();
+        interpolated = true;
+        const bool closed = scanInterpolation(tokens);
+        --interpolationDepth_;
+        if (!closed) {
+          return;
+        }
+        textStart = offset_;
+        continue;
+      }
+      if (isIdentifierStart(peek())) {
+        flushText();
+        interpolated = true;
+        scanIdentifier(tokens);
+        textStart = offset_;
+        continue;
+      }
+      // A '$' that is not followed by a name or an expression is an ordinary
+      // character, so "costs $5" needs no escape.
+      value.push_back('$');
+      continue;
     }
     if (c != '\\') {
       value.push_back(c);
@@ -476,6 +539,7 @@ void Lexer::scanString(std::vector<Token>& tokens) {
       case 'n': value.push_back('\n'); break;
       case 't': value.push_back('\t'); break;
       case 'r': value.push_back('\r'); break;
+      case '$': value.push_back('$'); break;
       case '0':
         diagnostics_.error(file_, SourceSpan{charStart, offset_},
                            "NUL characters are not supported in string literals because 'str' is "
@@ -542,11 +606,56 @@ void Lexer::scanString(std::vector<Token>& tokens) {
   }
 
   Token token;
-  token.kind = TokenKind::StringLiteral;
-  token.span = SourceSpan{start, offset_};
+  token.kind = interpolated ? TokenKind::StringEnd : TokenKind::StringLiteral;
+  token.span = SourceSpan{interpolated ? textStart : start, offset_};
   token.text = source_.text().substr(start, offset_ - start);
   token.stringValue = std::move(value);
   tokens.push_back(std::move(token));
+}
+
+/// Enters an interpolated string inside another one. The nesting is bounded so
+/// that `"${"${"${...}"}"}"` cannot exhaust the lexer's stack.
+bool Lexer::enterInterpolation(std::size_t spanBegin) {
+  if (interpolationDepth_ >= kMaxInterpolationDepth) {
+    diagnostics_.error(file_, SourceSpan{spanBegin, offset_},
+                       "interpolations are nested too deeply (limit " +
+                           std::to_string(kMaxInterpolationDepth) + " levels)");
+    return false;
+  }
+  ++interpolationDepth_;
+  return true;
+}
+
+/// Scans the tokens of `${ ... }`, leaving the closing `}` consumed. The tokens
+/// go into the same stream, between two string parts, so the parser can read the
+/// expression with the ordinary expression parser.
+bool Lexer::scanInterpolation(std::vector<Token>& tokens) {
+  for (;;) {
+    // A line break before the closing '}' means the interpolation was never
+    // finished; checking first keeps the message on the string, not on whatever
+    // follows it.
+    if (peek() == '\n' || peek() == '\r') {
+      diagnostics_.error(file_, SourceSpan{offset_, offset_},
+                         "unterminated interpolation in a string literal; expected '}' on the "
+                         "same line");
+      return false;
+    }
+    skipWhitespaceAndComments();
+    if (atEnd()) {
+      diagnostics_.error(file_, SourceSpan{offset_, offset_},
+                         "unterminated interpolation in a string literal; expected '}'");
+      return false;
+    }
+    if (peek() == '}') {
+      ++offset_;
+      return true;
+    }
+    const std::size_t before = tokens.size();
+    scanToken(tokens);
+    for (std::size_t i = before; i < tokens.size(); ++i) {
+      tokens[i].newlineBefore = false;
+    }
+  }
 }
 
 }  // namespace gable

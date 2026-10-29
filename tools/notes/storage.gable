@@ -5,119 +5,115 @@
 // the format unambiguous without an escaping mechanism.
 //
 // The whole file is parsed into a list of tasks before a command runs, and a
-// command writes the list back with str_join. Reading and writing are one pass
+// command writes the list back with '.join'. Reading and writing are one pass
 // over the tasks; nothing is copied per line.
 
-import "text.gable";
+import "text.gable"
 
 struct Task {
-    done: bool,
-    title: str,
+    done: bool
+    title: str
 }
 
 struct LoadResult {
-    ok: bool,
-    tasks: [Task],
-    error: str,
+    ok: bool
+    tasks: [Task]
+    error: str
 }
 
 /// Stable reason codes of the file builtins, from the specification. The message
 /// in `error` is localised, so only these codes are compared.
-fn file_code_not_found() -> i32 {
-    return 1;
+fn file_code_not_found() -> int {
+    return 1
 }
 
-fn file_code_busy() -> i32 {
-    return 6;
+fn file_code_busy() -> int {
+    return 6
 }
 
 /// Parses file contents into tasks. A trailing line break ends the file instead
 /// of producing an empty task, and an empty file has no tasks.
 fn parse_content(content: str) -> LoadResult {
-    var tasks: [Task] = [];
-    for line in str_split(content, "\n") {
+    let tasks: [Task] = []
+    for line in content.split("\n") {
         if line.len == 0 {
-            continue;
+            continue
         }
-        let stored = parse_stored(line);
+        let stored = parse_stored(line)
         if !stored.valid {
-            return LoadResult(false, tasks, "it contains a line that is not a task");
+            return LoadResult(false, tasks, "it contains a line that is not a task")
         }
-        list_push(tasks, Task(stored.done, stored.title));
+        tasks.push(Task(stored.done, stored.title))
     }
-    return LoadResult(true, tasks, "");
+    return LoadResult(true, tasks, "")
 }
 
 /// Reads the notes file. A missing file is not an error: it means there are no
 /// tasks yet, and the first `add` creates it.
 fn load_notes(path: str) -> LoadResult {
-    let read = fs_read_text(path);
-    if read.ok {
-        return parse_content(read.text);
+    let read = fs_read_text(path) else {
+        if read.code == file_code_not_found() {
+            return LoadResult(true, [], "")
+        }
+        return LoadResult(false, [], "${read.error} (code ${read.code})")
     }
-    if read.code == file_code_not_found() {
-        return LoadResult(true, [], "");
-    }
-    return LoadResult(false, [], read.error + " (code " + str_of_i64(read.code as i64) + ")");
+    return parse_content(read.text)
 }
 
 /// One stored line for `task`, without its line break.
 fn render_stored(task: Task) -> str {
-    var flag: str = "0";
+    var flag = "0"
     if task.done {
-        flag = "1";
+        flag = "1"
     }
-    return flag + "\t" + task.title;
+    return "${flag}\t${task.title}"
 }
 
 /// The whole file contents for `tasks`. Joining allocates the result once, so
 /// saving does not copy the file again for every task.
 fn render_content(tasks: [Task]) -> str {
-    var lines: [str] = [];
+    let lines: [str] = []
     for task in tasks {
-        list_push(lines, render_stored(task));
+        lines.push(render_stored(task))
     }
     if lines.len == 0 {
-        return "";
+        return ""
     }
-    return str_join(lines, "\n") + "\n";
+    return lines.join("\n") + "\n"
 }
 
 /// Saves the notes file through a temporary file that replaces the old one in a
 /// single step, so an interrupted or failing save leaves the previous contents.
 fn save_notes(path: str, tasks: [Task]) -> str {
-    let written = fs_write_text_atomic(path, render_content(tasks));
-    if !written.ok {
-        return written.error + " (code " + str_of_i64(written.code as i64) + ")";
+    let written = fs_write_text_atomic(path, render_content(tasks)) else {
+        return "${written.error} (code ${written.code})"
     }
-    return "";
+    return ""
 }
 
 /// Takes the file lock that makes a read-modify-write sequence exclusive, and
 /// returns an empty string on success or a message on failure.
 fn lock_notes(path: str) -> str {
-    let locked = fs_lock(path);
-    if !locked.ok {
+    let locked = fs_lock(path) else {
         if locked.code == file_code_busy() {
-            return "another notes command is using the file";
+            return "another notes command is using the file"
         }
-        return locked.error + " (code " + str_of_i64(locked.code as i64) + ")";
+        return "${locked.error} (code ${locked.code})"
     }
-    return "";
+    return ""
 }
 
 fn unlock_notes(path: str) -> str {
-    let released = fs_unlock(path);
-    if !released.ok {
-        return released.error + " (code " + str_of_i64(released.code as i64) + ")";
+    let released = fs_unlock(path) else {
+        return "${released.error} (code ${released.code})"
     }
-    return "";
+    return ""
 }
 
-fn render_line(index: i32, task: Task) -> str {
-    var mark: str = "[ ]";
+fn render_line(index: int, task: Task) -> str {
+    var mark = "[ ]"
     if task.done {
-        mark = "[x]";
+        mark = "[x]"
     }
-    return str_of_i64(index as i64) + ". " + mark + " " + task.title;
+    return "$index. $mark ${task.title}"
 }

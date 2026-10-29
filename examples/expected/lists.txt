@@ -1,0 +1,6 @@
+ada: 12
+grace: 15
+alan: 9
+3 scores, 36 points
+10 squares, last is 81
+first is now 100

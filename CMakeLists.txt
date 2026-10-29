@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
   gable
-  VERSION 0.2.0
+  VERSION 0.3.0
   DESCRIPTION "The Gable programming language compiler"
   HOMEPAGE_URL "https://github.com/Undrocs/gable"
   LANGUAGES C CXX
@@ -124,6 +124,7 @@ add_library(gable_compiler STATIC
   compiler/src/types/ir.cpp
   compiler/src/types/operators.cpp
   compiler/src/codegen/c_backend.cpp
+  compiler/src/format/format.cpp
   compiler/src/driver/frontend.cpp
   compiler/src/driver/loader.cpp
   compiler/src/driver/output.cpp
@@ -176,13 +177,20 @@ if(BUILD_TESTING)
     tests/unit/semantic_tests.cpp
     tests/unit/codegen_tests.cpp
     tests/unit/cli_tests.cpp
+    tests/unit/diagnostic_tests.cpp
+    tests/unit/format_tests.cpp
+    tests/unit/editor_grammar_tests.cpp
     tests/unit/robustness_tests.cpp
   )
   target_link_libraries(gable_unit_tests PRIVATE gable_compiler)
   target_include_directories(gable_unit_tests PRIVATE tests/unit)
+  # One test reads files from the repository (the editor grammar), which needs to
+  # know where the repository is when the test binary runs from the build tree.
+  target_compile_definitions(gable_unit_tests PRIVATE
+    GABLE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME unit COMMAND gable_unit_tests)
 
-  # The notes tool is the v0.2 acceptance test: a real multi-file program that
+  # The notes tool is the acceptance test: a real multi-file program that
   # is built and driven through its command line.
   add_executable(notes_tool_tests tools/notes/tests/notes_tool_tests.cpp)
   target_link_libraries(notes_tool_tests PRIVATE gable_compiler)

@@ -1,0 +1,144 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Gable",
+  "scopeName": "source.gable",
+  "fileTypes": ["gable"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.gable",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.gable" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.gable" } }
+        },
+        {
+          "name": "comment.line.double-slash.gable",
+          "match": "//.*$",
+          "captures": { "0": { "name": "punctuation.definition.comment.gable" } }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.gable",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.gable" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.gable" } },
+          "patterns": [
+            {
+              "name": "meta.interpolation.expression.gable",
+              "begin": "\\$\\{",
+              "end": "\\}",
+              "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.gable" } },
+              "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.gable" } },
+              "patterns": [{ "include": "$self" }]
+            },
+            {
+              "name": "variable.other.interpolation.gable",
+              "match": "\\$[A-Za-z_][A-Za-z0-9_]*",
+              "captures": { "0": { "name": "punctuation.definition.variable.gable" } }
+            },
+            {
+              "name": "constant.character.escape.gable",
+              "match": "\\\\[ntr\\\\\"$]|\\\\u\\{[0-9A-Fa-f]+\\}|\\\\u[0-9A-Fa-f]{4}"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.gable",
+          "match": "\\b0[xX][0-9A-Fa-f]+\\b|\\b0[bB][01]+\\b|\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "storage.type.function.gable",
+          "match": "\\bfn\\b"
+        },
+        {
+          "name": "storage.modifier.gable",
+          "match": "\\b(let|var)\\b"
+        },
+        {
+          "name": "keyword.control.gable",
+          "match": "\\b(if|else|while|for|in|return|break|continue)\\b"
+        },
+        {
+          "name": "keyword.other.gable",
+          "match": "\\b(struct|import|as)\\b"
+        },
+        {
+          "name": "constant.language.boolean.gable",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.gable",
+          "match": "\\b(int|i8|i16|i32|i64|u8|u16|u32|u64|bool|str|void)\\b"
+        },
+        {
+          "name": "entity.name.type.struct.gable",
+          "match": "(?<=\\bstruct\\s+)[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.gable",
+          "match": "\\b(print|eprint|arg_count|arg|fs_read_text|fs_write_text|fs_write_text_atomic|fs_lock|fs_unlock|str_of_i64|str_of_bool|parse_i64|str_find|str_slice|str_trim|str_split|str_join|list_push)\\b"
+        },
+        {
+          "name": "support.function.method.gable",
+          "match": "\\b(trim|split|find|slice|join|push)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "variable.other.property.gable",
+          "match": "\\blen\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.gable",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.gable",
+          "match": "==|!=|<=|>=|&&|\\|\\||\\.\\.|->|[=+\\-*/%<>!]"
+        },
+        {
+          "name": "punctuation.gable",
+          "match": "[(){}\\[\\],:;.]"
+        }
+      ]
+    }
+  }
+}

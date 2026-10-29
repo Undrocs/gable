@@ -1,23 +1,22 @@
 // Greatest common divisor by the Euclidean algorithm, and least common
 // multiple derived from it.
-fn gcd(a: i64, b: i64) -> i64 {
-    var x: i64 = a;
-    var y: i64 = b;
+fn gcd(a: int, b: int) -> int {
+    var x = a
+    var y = b
     while y != 0 {
-        let remainder: i64 = x % y;
-        x = y;
-        y = remainder;
+        let remainder = x % y
+        x = y
+        y = remainder
     }
-    return x;
+    return x
 }
 
-fn lcm(a: i64, b: i64) -> i64 {
-    return (a / gcd(a, b)) * b;
+fn lcm(a: int, b: int) -> int {
+    return (a / gcd(a, b)) * b
 }
 
-fn main() -> i32 {
-    print(gcd(1071, 462));
-    print(lcm(21, 6));
-    print(gcd(270, 192));
-    return 0;
+fn main() {
+    print("gcd(1071, 462) = ${gcd(1071, 462)}")
+    print("lcm(21, 6) = ${lcm(21, 6)}")
+    print("gcd(270, 192) = ${gcd(270, 192)}")
 }

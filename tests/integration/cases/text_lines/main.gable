@@ -1,5 +1,5 @@
 // Reading text into fields, and building text without repeated concatenation.
-fn main() -> i32 {
+fn main() {
     let record = "write spec|open|2";
     let fields = str_split(record, "|");
     print(fields.len);
@@ -28,5 +28,4 @@ fn main() -> i32 {
     print(bytes.len);
     print(bytes[0]);
     print(bytes[1]);
-    return 0;
 }

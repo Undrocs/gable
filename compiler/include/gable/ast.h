@@ -41,10 +41,17 @@ struct Expr {
     IntegerLiteral,
     BoolLiteral,
     StringLiteral,
+    /// `"total: $count"`: text parts around expressions, lowered to string
+    /// concatenation with the same conversions `+` would need.
+    InterpolatedString,
     Name,
     Unary,
     Binary,
     Call,
+    /// `values.push(x)`: a call whose receiver is the first argument of the
+    /// built-in operation it names (`.push`, `.trim`, `.split`, ...). `lhs` is
+    /// the receiver, `name` the method, and `arguments` what follows it.
+    MethodCall,
     FieldAccess,
     Index,
     Cast,
@@ -64,6 +71,9 @@ struct Expr {
   bool boolValue = false;
   // StringLiteral
   std::string stringValue;
+  // InterpolatedString: one argument per interpolation and, in `parts`, the text
+  // before the first, between each pair, and after the last (arguments.size() + 1).
+  std::vector<std::string> parts;
   // Name, and the callee name for Call
   std::string name;
   // Unary / Binary
@@ -122,9 +132,11 @@ struct Stmt {
   bool isRangeLoop = false;
   // If then-branch and While/For body; Block contents
   std::vector<std::unique_ptr<Stmt>> body;
-  // If else-branch; empty when there is no `else`
+  // If else-branch, or the failure block of a fallible binding
+  // (`let text = fs_read_text(path) else { ... }`).
   std::vector<std::unique_ptr<Stmt>> elseBody;
   bool hasElse = false;
+  SourceSpan elseSpan;
 };
 
 using StmtPtr = std::unique_ptr<Stmt>;

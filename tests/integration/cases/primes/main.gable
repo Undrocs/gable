@@ -24,8 +24,7 @@ fn count_primes(limit: i32) -> i32 {
     return count;
 }
 
-fn main() -> i32 {
+fn main() {
     print(count_primes(100));
     print(count_primes(1000));
-    return 0;
 }

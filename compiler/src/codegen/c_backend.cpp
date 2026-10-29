@@ -81,6 +81,11 @@ class CEmitter {
       for (const ir::LocalVariable& local : function->locals) {
         ensureType(local.type);
       }
+      // Literals can introduce a type that no declaration mentions, such as the
+      // fixed array behind `["1 + 2", "3"]`, so walk the body as well.
+      for (const auto& statement : function->body) {
+        ensureStmtTypes(*statement);
+      }
     }
     line("");
     emitPrototypes();
@@ -203,6 +208,38 @@ class CEmitter {
       return sanitize(field);
     }
     return "gable_f_" + sanitize(field);
+  }
+
+  void ensureExprTypes(const ir::Expr& expr) {
+    ensureType(expr.type);
+    if (expr.lhs) {
+      ensureExprTypes(*expr.lhs);
+    }
+    if (expr.rhs) {
+      ensureExprTypes(*expr.rhs);
+    }
+    for (const auto& argument : expr.arguments) {
+      ensureExprTypes(*argument);
+    }
+  }
+
+  void ensureStmtTypes(const ir::Stmt& statement) {
+    ensureType(statement.type);
+    if (statement.value) {
+      ensureExprTypes(*statement.value);
+    }
+    if (statement.target) {
+      ensureExprTypes(*statement.target);
+    }
+    if (statement.limit) {
+      ensureExprTypes(*statement.limit);
+    }
+    for (const auto& nested : statement.body) {
+      ensureStmtTypes(*nested);
+    }
+    for (const auto& nested : statement.elseBody) {
+      ensureStmtTypes(*nested);
+    }
   }
 
   /// Declares the C representation of `type`, after everything it depends on.
@@ -610,7 +647,7 @@ class CEmitter {
       case ir::Builtin::ArgCount:
         return sequence(value("gable_rt_arg_count()", false), expr.type, pre);
       case ir::Builtin::Arg:
-        return sequence(value("gable_rt_arg((int32_t)(" + joined() + "))", false), expr.type,
+        return sequence(value("gable_rt_arg((int64_t)(" + joined() + "))", false), expr.type,
                         pre);
       case ir::Builtin::FsReadText:
         return sequence(value("gable_rt_fs_read_text(" + joined() + ")", false), expr.type, pre);
@@ -763,7 +800,17 @@ class CEmitter {
           initializer = emitExpr(*statement.value, pre).code;
         }
         flush(pre);
-        line(cType(statement.type) + " " + slotName(statement.slot) + " = " + initializer + ";");
+        const std::string slot = slotName(statement.slot);
+        line(cType(statement.type) + " " + slot + " = " + initializer + ";");
+        if (statement.hasElse) {
+          // The value is bound before it is checked, so the failure block can read
+          // `error`; it always leaves the function or the loop.
+          line("if (!(" + slot + "." + fieldCName(statement.type, "ok") + ")) {");
+          indent();
+          emitStatements(statement.elseBody);
+          dedent();
+          line("}");
+        }
         return;
       }
       case ir::Stmt::Kind::Assign: {
@@ -985,7 +1032,13 @@ class CEmitter {
     // value exists, so the collector can find the values that are still in use.
     line("gable_rt_init();");
     line("gable_rt_set_args(argc, argv);");
-    line("return (int)gable_fn_" + sanitize(entry->name) + "();");
+    if (entry->returnType.kind() == ir::TypeKind::Void) {
+      // `fn main()` has no result: the program exits successfully.
+      line("gable_fn_" + sanitize(entry->name) + "();");
+      line("return 0;");
+    } else {
+      line("return (int)gable_fn_" + sanitize(entry->name) + "();");
+    }
     dedent();
     line("}");
   }

@@ -3,12 +3,11 @@ fn noisy(value: bool) -> bool {
     return value;
 }
 
-fn main() -> i32 {
+fn main() {
     let a: bool = false && noisy(true);
     let b: bool = true || noisy(true);
     let c: bool = true && noisy(false);
     print(a);
     print(b);
     print(c);
-    return 0;
 }

@@ -33,6 +33,17 @@ std::uint64_t literalBits(std::uint64_t magnitude, bool negate) {
 
 bool isPrintName(const std::string& name) { return name == "print" || name == "eprint"; }
 
+/// The built-in function that a method name stands for. The receiver becomes its
+/// first argument, so the two spellings cannot drift apart.
+std::string_view methodToBuiltin(const std::string& method) {
+  if (method == "trim") return "str_trim";
+  if (method == "split") return "str_split";
+  if (method == "slice") return "str_slice";
+  if (method == "find") return "str_find";
+  if (method == "join") return "str_join";
+  return {};
+}
+
 /// Depth-first search over struct fields looking for a value-containment cycle.
 bool containsItself(ir::Type type, const ir::Module& module, std::vector<bool>& onPath,
                     std::vector<bool>& done) {
@@ -241,11 +252,13 @@ void SemanticAnalyzer::registerBuiltins() {
   };
 
   const ir::Type str = ir::Type::str();
-  const ir::Type i32 = ir::Type::i32();
+  // Counts, sizes, and indices are `int` everywhere, so a length from `.len`, an
+  // argument index, and a slice bound can be used together without conversions.
+  const ir::Type intType = ir::Type::intType();
 
   builtins_ = {
-      {"arg_count", ir::Builtin::ArgCount, i32, {}},
-      {"arg", ir::Builtin::Arg, str, {i32}},
+      {"arg_count", ir::Builtin::ArgCount, intType, {}},
+      {"arg", ir::Builtin::Arg, str, {intType}},
       {"fs_read_text", ir::Builtin::FsReadText, preludeStruct("FileReadResult"), {str}},
       {"fs_write_text",
        ir::Builtin::FsWriteText,
@@ -263,11 +276,11 @@ void SemanticAnalyzer::registerBuiltins() {
        ir::Builtin::FsUnlock,
        preludeStruct("FileWriteResult"),
        {str}},
-      {"str_of_i64", ir::Builtin::StrOfI64, str, {ir::Type::i64()}},
+      {"str_of_i64", ir::Builtin::StrOfI64, str, {intType}},
       {"str_of_bool", ir::Builtin::StrOfBool, str, {ir::Type::boolean()}},
       {"parse_i64", ir::Builtin::ParseI64, preludeStruct("ParseResult"), {str}},
       {"str_find", ir::Builtin::Find, preludeStruct("FindResult"), {str, str}},
-      {"str_slice", ir::Builtin::Slice, preludeStruct("SliceResult"), {str, i32, i32}},
+      {"str_slice", ir::Builtin::Slice, preludeStruct("SliceResult"), {str, intType, intType}},
       {"str_trim", ir::Builtin::Trim, str, {str}},
       // Splitting and joining are what makes a list of strings useful: reading
       // input into fields, and building output without repeated concatenation.
@@ -289,7 +302,8 @@ void SemanticAnalyzer::checkEntryPoint() {
   const auto it = functions_.find("main");
   if (it == functions_.end()) {
     diagnostics_.error(0, SourceSpan{},
-                       "no 'main' function found; an executable requires 'fn main() -> i32'");
+                       "no 'main' function found; an executable requires 'fn main()' or "
+                       "'fn main() -> int'");
     return;
   }
   const ast::FunctionDecl& declaration = *it->second.declaration;
@@ -298,12 +312,16 @@ void SemanticAnalyzer::checkEntryPoint() {
                        "'main' must not take parameters; use arg_count() and arg(i) to read the "
                        "command line");
   }
-  if (it->second.returnType != ir::Type::i32()) {
+  if (it->second.returnType != ir::Type::intType() &&
+      it->second.returnType != ir::Type::voidType()) {
     diagnostics_.error(declaration.file,
                        declaration.hasReturnType ? declaration.returnType.span
                                                  : declaration.nameSpan,
-                       "'main' must return i32, found '" +
+                       "'main' must return 'int' (the exit status) or nothing at all, found '" +
                            ir::typeName(it->second.returnType, *module_) + "'");
+    diagnostics_.note(declaration.file, declaration.nameSpan,
+                      "write 'fn main()' to exit with status 0, or 'fn main() -> int' to "
+                      "return a status");
   }
 }
 
@@ -470,6 +488,54 @@ ir::StmtPtr SemanticAnalyzer::checkLet(const ast::Stmt& stmt) {
   // refers to an outer binding or reports an undefined name.
   scopes_.back().emplace(
       stmt.name, Binding{lowered->slot, type, stmt.isMutable, false, stmt.nameSpan, currentFile_});
+
+  if (stmt.hasElse) {
+    // `let text = fs_read_text(path) else { ... }` runs the block when the value
+    // reports failure. The binding is in scope there, holding the failed value,
+    // so the block can report why.
+    const ir::StructInfo* info = structOf(type);
+    const int okIndex = info == nullptr ? -1 : fieldIndex(*info, "ok");
+    const bool reportsSuccess =
+        okIndex >= 0 &&
+        info->fields[static_cast<std::size_t>(okIndex)].type == ir::Type::boolean();
+    if (type.kind() != ir::TypeKind::Error) {
+      if (info == nullptr) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "'else' needs a value that can report failure, and '" +
+                               ir::typeName(type, *module_) + "' has no 'ok' field");
+        diagnostics_.note(currentFile_, stmt.elseSpan,
+                          "fs_read_text, fs_write_text, parse_i64, str_find, and str_slice "
+                          "return a value with 'ok'; for anything else, check the condition with "
+                          "an 'if' statement");
+      } else if (okIndex < 0) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "'else' needs a value that can report failure, and struct '" +
+                               info->name + "' has no 'ok' field");
+        diagnostics_.note(currentFile_, stmt.elseSpan,
+                          "write the check as 'if result.ok { ... } else { ... }' instead");
+      } else if (!reportsSuccess) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "'else' needs an 'ok: bool' field, and '" + info->name + ".ok' is '" +
+                               ir::typeName(
+                                   info->fields[static_cast<std::size_t>(okIndex)].type,
+                                   *module_) + "'");
+      }
+    }
+    pushScope();
+    lowered->elseBody = checkStatements(stmt.elseBody);
+    popScope();
+    if (reportsSuccess) {
+      lowered->hasElse = true;
+      lowered->okField = static_cast<std::uint32_t>(okIndex);
+      if (!alwaysDiverges(lowered->elseBody)) {
+        diagnostics_.error(currentFile_, stmt.elseSpan,
+                           "the 'else' block of a binding must end the statement with 'return', "
+                           "'break', or 'continue'");
+        diagnostics_.note(currentFile_, stmt.elseSpan,
+                          "when the value reports failure there is no value to continue with");
+      }
+    }
+  }
   return lowered;
 }
 
@@ -507,6 +573,9 @@ ir::ExprPtr SemanticAnalyzer::checkLvalue(const ast::Expr& expr) {
       Binding* binding = lookup(expr.name);
       if (binding == nullptr) {
         diagnostics_.error(currentFile_, expr.span, "undefined variable '" + expr.name + "'");
+        diagnostics_.note(currentFile_, expr.span,
+                          "a variable has to be declared before it is assigned: 'var " +
+                              expr.name + " = 0'");
         return std::make_unique<ir::Expr>(ir::Expr::Kind::Local, ir::Type::error(), expr.span);
       }
       if (!binding->isMutable) {
@@ -544,7 +613,8 @@ ir::ExprPtr SemanticAnalyzer::checkLvalue(const ast::Expr& expr) {
       const int index = fieldIndex(*info, expr.fieldName);
       if (index < 0) {
         reportUnknownField(expr.fieldSpan, *info, expr.fieldName);
-        return base;
+        return std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, ir::Type::error(),
+                                          expr.span);
       }
       const ir::Type fieldType = info->fields[static_cast<std::size_t>(index)].type;
       auto access = std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, fieldType, expr.span);
@@ -723,7 +793,10 @@ ir::StmtPtr SemanticAnalyzer::checkFor(const ast::Stmt& stmt) {
       popScope();
       return nullptr;
     }
-    if (!iterable->type.isIterable()) {
+    if (iterable->type.kind() == ir::TypeKind::Error) {
+      // The iterable already failed to check; reporting it again would be noise.
+      variableType = ir::Type::error();
+    } else if (!iterable->type.isIterable()) {
       diagnostics_.error(currentFile_, stmt.value->span,
                          "a 'for' loop iterates over an array, a list, or a range such as 0..n, "
                          "found '" +
@@ -792,6 +865,8 @@ ir::ExprPtr SemanticAnalyzer::checkExpr(const ast::Expr& expr, std::optional<ir:
       lowered->stringValue = expr.stringValue;
       return lowered;
     }
+    case ast::Expr::Kind::InterpolatedString:
+      return checkInterpolatedString(expr);
     case ast::Expr::Kind::Name: {
       const Binding* binding = lookup(expr.name);
       if (binding == nullptr) {
@@ -823,6 +898,8 @@ ir::ExprPtr SemanticAnalyzer::checkExpr(const ast::Expr& expr, std::optional<ir:
       return checkBinary(expr, expected);
     case ast::Expr::Kind::Call:
       return checkCall(expr);
+    case ast::Expr::Kind::MethodCall:
+      return checkMethodCall(expr);
     case ast::Expr::Kind::FieldAccess:
       return checkFieldAccess(expr);
     case ast::Expr::Kind::Index:
@@ -897,7 +974,7 @@ ir::ExprPtr SemanticAnalyzer::checkIntegerLiteral(const ast::Expr& expr,
     return checkUnary(expr, expected);
   }
 
-  ir::Type type = ir::Type::i32();
+  ir::Type type = ir::Type::intType();
   if (expected) {
     if (expected->kind() != ir::TypeKind::Error && expected->isInteger()) {
       type = *expected;
@@ -918,7 +995,7 @@ ir::ExprPtr SemanticAnalyzer::checkUnary(const ast::Expr& expr, std::optional<ir
   // A negated literal is folded so that the minimum value of a signed type is
   // representable and range checked against the expected type.
   if (const std::optional<LiteralInfo> literal = asIntegerLiteral(expr)) {
-    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::i32();
+    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::intType();
     return literalAs(expr, *literal, type);
   }
 
@@ -942,6 +1019,27 @@ ir::ExprPtr SemanticAnalyzer::checkUnary(const ast::Expr& expr, std::optional<ir
   }
   lowered->type = lowered->lhs->type;
   return lowered;
+}
+
+void SemanticAnalyzer::reportOperandMismatch(SourceSpan span, BinaryOp op, ir::Type left,
+                                             ir::Type right) {
+  diagnostics_.error(currentFile_, span,
+                     std::string("operands of '") + binaryOpSpelling(op) +
+                         "' have different types: '" + ir::typeName(left, *module_) + "' and '" +
+                         ir::typeName(right, *module_) + "'; Gable never converts between types "
+                         "implicitly");
+  if (left.isInteger() && right.isInteger()) {
+    diagnostics_.note(currentFile_, span,
+                      "convert one of them explicitly, for example with 'as " +
+                          ir::typeName(left, *module_) + "'");
+  } else if (left == ir::Type::str() || right == ir::Type::str()) {
+    diagnostics_.note(currentFile_, span,
+                      "a string is joined with '+' only to another string; convert the other "
+                      "value with str_of_i64 or str_of_bool, or write it inside a string "
+                      "literal as '$value'");
+  } else {
+    diagnostics_.note(currentFile_, span, "use 'as' to convert one operand explicitly");
+  }
 }
 
 ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<ir::Type> expected) {
@@ -969,7 +1067,7 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
   ir::Type operandType = ir::Type::error();
 
   if (lhsLiteral && rhsLiteral) {
-    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::i32();
+    const ir::Type type = (expected && expected->isInteger()) ? *expected : ir::Type::intType();
     lhs = literalAs(*expr.lhs, *lhsLiteral, type);
     rhs = literalAs(*expr.rhs, *rhsLiteral, type);
     operandType = type;
@@ -988,8 +1086,13 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
       lhs = literalAs(*expr.lhs, *lhsLiteral, rhs->type);
       operandType = rhs->type;
     } else {
-      lhs = checkExpr(*expr.lhs, std::nullopt);
-      operandType = lhs->type;
+      // The right operand is a `str` and the left one is a literal. A literal is
+      // never a string, so the two operands disagree and the operator cannot be
+      // applied: reporting the mismatch here is what keeps the backend from being
+      // handed `str + int`.
+      lhs = literalAs(*expr.lhs, *lhsLiteral, ir::Type::intType());
+      reportOperandMismatch(expr.span, op, lhs->type, rhs->type);
+      return failed();
     }
   } else if (!lhsLiteral && rhsLiteral) {
     lhs = checkExpr(*expr.lhs, std::nullopt);
@@ -1006,8 +1109,10 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
       rhs = literalAs(*expr.rhs, *rhsLiteral, lhs->type);
       operandType = lhs->type;
     } else {
-      rhs = checkExpr(*expr.rhs, std::nullopt);
-      operandType = rhs->type;
+      // Mirror of the case above: a string on the left, a literal on the right.
+      rhs = literalAs(*expr.rhs, *rhsLiteral, ir::Type::intType());
+      reportOperandMismatch(expr.span, op, lhs->type, rhs->type);
+      return failed();
     }
   } else {
     lhs = checkExpr(*expr.lhs, std::nullopt);
@@ -1016,12 +1121,7 @@ ir::ExprPtr SemanticAnalyzer::checkBinary(const ast::Expr& expr, std::optional<i
       return failed();
     }
     if (lhs->type != rhs->type) {
-      diagnostics_.error(currentFile_, expr.span,
-                         std::string("operands of '") + binaryOpSpelling(op) +
-                             "' have different types: '" + ir::typeName(lhs->type, *module_) +
-                             "' and '" + ir::typeName(rhs->type, *module_) +
-                             "'; Gable never converts between types implicitly");
-      diagnostics_.note(currentFile_, expr.span, "use 'as' to convert one operand explicitly");
+      reportOperandMismatch(expr.span, op, lhs->type, rhs->type);
       return failed();
     }
     operandType = lhs->type;
@@ -1327,7 +1427,9 @@ ir::ExprPtr SemanticAnalyzer::checkFieldAccess(const ast::Expr& expr) {
   const int index = fieldIndex(*info, expr.fieldName);
   if (index < 0) {
     reportUnknownField(expr.fieldSpan, *info, expr.fieldName);
-    return base;
+    // The access is an error, so the expression around it must not report a
+    // second problem: `return p.z` in an int function is one mistake, not two.
+    return std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, ir::Type::error(), expr.span);
   }
   const ir::Type fieldType = info->fields[static_cast<std::size_t>(index)].type;
   auto lowered = std::make_unique<ir::Expr>(ir::Expr::Kind::FieldAccess, fieldType, expr.span);
@@ -1401,12 +1503,45 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
     }
     return list;
   }
-  if (!expected || expected->kind() != ir::TypeKind::Array) {
+  if (!expected) {
+    // Nothing says what the literal holds, but its elements may still agree:
+    // `for name in ["ada", "grace"]` and `let xs = [1, 2, 3]` are unambiguous.
+    // The result is a growable list, the container a program reaches for by
+    // default; a fixed array is always spelled out in the type.
+    std::vector<ir::ExprPtr> elements;
+    ir::Type elementType = ir::Type::error();
+    bool agrees = true;
+    for (const auto& element : expr.arguments) {
+      ir::ExprPtr lowered = checkExpr(*element, std::nullopt);
+      if (lowered->type.kind() == ir::TypeKind::Error) {
+        agrees = false;
+      } else if (elementType.kind() == ir::TypeKind::Error) {
+        elementType = lowered->type;
+      } else if (lowered->type != elementType) {
+        agrees = false;
+      }
+      elements.push_back(std::move(lowered));
+    }
+    if (agrees && elementType.kind() != ir::TypeKind::Error && !elements.empty() &&
+        elementType.kind() != ir::TypeKind::Void) {
+      const ir::Type listType = module_->types.list(elementType);
+      auto lowered =
+          std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, listType, expr.span);
+      lowered->arguments = std::move(elements);
+      return lowered;
+    }
     diagnostics_.error(currentFile_, expr.span,
                        "cannot infer the type of an array literal from its elements");
     diagnostics_.note(currentFile_, expr.span,
-                      "annotate the binding, for example 'let values: [i32; 3] = [1, 2, 3];' "
-                      "for a fixed array, or 'let totals: [i32] = [0];' for a growable list");
+                      "annotate the binding, for example 'let values: [int; 3] = [1, 2, 3];' "
+                      "for a fixed array, or 'let totals: [int] = [0];' for a growable list");
+    return std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, ir::Type::error(),
+                                      expr.span);
+  }
+
+  if (expected->kind() != ir::TypeKind::Array) {
+    diagnostics_.error(currentFile_, expr.span,
+                       "cannot infer the type of an array literal from its elements");
     for (const auto& element : expr.arguments) {
       checkExpr(*element, std::nullopt);
     }
@@ -1429,6 +1564,206 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
     lowered->arguments.push_back(conformTo(*element, elementType, "array element"));
   }
   return lowered;
+}
+
+ir::ExprPtr SemanticAnalyzer::checkMethodCall(const ast::Expr& expr) {
+  ir::ExprPtr receiver = checkExpr(*expr.lhs, std::nullopt);
+  const ir::Type receiverType = receiver->type;
+
+  auto failed = [&]() {
+    return std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::error(), expr.span);
+  };
+
+  // `values.push(x)` is the list operation written with the list first, which is
+  // how every other list and string operation is written as well.
+  if (expr.name == "push") {
+    if (receiverType.kind() == ir::TypeKind::Error) {
+      for (const auto& argument : expr.arguments) {
+        checkExpr(*argument, std::nullopt);
+      }
+      return failed();
+    }
+    if (receiverType.kind() != ir::TypeKind::List) {
+      reportUnknownMethod(expr, receiverType);
+      for (const auto& argument : expr.arguments) {
+        checkExpr(*argument, std::nullopt);
+      }
+      return failed();
+    }
+    if (expr.arguments.size() != 1) {
+      diagnostics_.error(currentFile_, expr.span,
+                         "'push' adds one value, found " +
+                             std::to_string(expr.arguments.size()) + " arguments");
+      for (const auto& argument : expr.arguments) {
+        checkExpr(*argument, std::nullopt);
+      }
+      return failed();
+    }
+    auto lowered =
+        std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::voidType(), expr.span);
+    lowered->builtin = ir::Builtin::ListPush;
+    lowered->name = "list_push";
+    lowered->arguments.push_back(std::move(receiver));
+    const ir::Type elementType = module_->types.listElement(receiverType);
+    lowered->arguments.push_back(conformTo(*expr.arguments[0], elementType, "list element"));
+    return lowered;
+  }
+
+  // Every other method is a built-in whose first parameter is the receiver.
+  const std::string_view freeFunction = methodToBuiltin(expr.name);
+  if (freeFunction.empty()) {
+    reportUnknownMethod(expr, receiverType);
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return failed();
+  }
+  const BuiltinInfo* builtin = findBuiltin(freeFunction);
+  if (builtin == nullptr || builtin->parameterTypes.empty()) {
+    return failed();
+  }
+  if (receiverType.kind() == ir::TypeKind::Error) {
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return failed();
+  }
+  if (receiverType != builtin->parameterTypes[0]) {
+    diagnostics_.error(currentFile_, expr.fieldSpan,
+                       "'" + expr.name + "' needs a value of type '" +
+                           ir::typeName(builtin->parameterTypes[0], *module_) + "', found '" +
+                           ir::typeName(receiverType, *module_) + "'");
+    noteAvailableMethods(expr.fieldSpan, receiverType);
+    for (const auto& argument : expr.arguments) {
+      checkExpr(*argument, std::nullopt);
+    }
+    return failed();
+  }
+
+  auto lowered = std::make_unique<ir::Expr>(ir::Expr::Kind::Call, builtin->returnType, expr.span);
+  lowered->builtin = builtin->id;
+  lowered->name = std::string(builtin->name);
+  lowered->arguments.push_back(std::move(receiver));
+
+  const std::size_t expected = builtin->parameterTypes.size() - 1;
+  if (expr.arguments.size() != expected) {
+    diagnostics_.error(currentFile_, expr.span,
+                       "'" + expr.name + "' expects " + std::to_string(expected) +
+                           " argument(s) besides the value it is called on, found " +
+                           std::to_string(expr.arguments.size()));
+  }
+  const std::size_t checked = std::min(expr.arguments.size(), expected);
+  for (std::size_t i = 0; i < checked; ++i) {
+    lowered->arguments.push_back(
+        conformTo(*expr.arguments[i], builtin->parameterTypes[i + 1], "argument"));
+  }
+  for (std::size_t i = checked; i < expr.arguments.size(); ++i) {
+    checkExpr(*expr.arguments[i], std::nullopt);
+  }
+  return lowered;
+}
+
+void SemanticAnalyzer::reportUnknownMethod(const ast::Expr& expr, ir::Type receiverType) {
+  // `.len` and a struct's fields are values, not calls: saying so at the
+  // parenthesis points at exactly what has to be deleted.
+  if (expr.name == "len" &&
+      (receiverType == ir::Type::str() || receiverType.isIterable())) {
+    diagnostics_.error(currentFile_, expr.fieldSpan,
+                       "'len' is a value, not a method; write '.len' without '()'");
+    return;
+  }
+  if (const ir::StructInfo* info = structOf(receiverType);
+      info != nullptr && fieldIndex(*info, expr.name) >= 0) {
+    diagnostics_.error(currentFile_, expr.fieldSpan,
+                       "'" + expr.name + "' is a field of struct '" + info->name +
+                           "', not a method; read it without '()'");
+    return;
+  }
+  diagnostics_.error(currentFile_, expr.fieldSpan,
+                     "'" + ir::typeName(receiverType, *module_) + "' has no method '" +
+                         expr.name + "'");
+  noteAvailableMethods(expr.fieldSpan, receiverType);
+}
+
+void SemanticAnalyzer::noteAvailableMethods(SourceSpan span, ir::Type receiverType) {
+  if (receiverType.kind() == ir::TypeKind::Str) {
+    diagnostics_.note(currentFile_, span,
+                      "a str supports '.len', '.trim()', '.split(separator)', '.slice(start, "
+                      "length)', and '.find(needle)'");
+    return;
+  }
+  if (receiverType.kind() == ir::TypeKind::List) {
+    diagnostics_.note(currentFile_, span,
+                      "a list supports '.len', '.push(value)', indexing, and 'for item in list'");
+    return;
+  }
+  if (receiverType.kind() == ir::TypeKind::Array) {
+    diagnostics_.note(currentFile_, span,
+                      "an array supports '.len', indexing, and 'for item in array'; use a list "
+                      "('[T]') when it has to grow");
+  }
+}
+
+ir::ExprPtr SemanticAnalyzer::checkInterpolatedString(const ast::Expr& expr) {
+  auto stringLiteral = [](std::string text, SourceSpan span) {
+    auto node = std::make_unique<ir::Expr>(ir::Expr::Kind::StringLiteral, ir::Type::str(), span);
+    node->stringValue = std::move(text);
+    return node;
+  };
+
+  ir::ExprPtr result;
+  auto append = [&](ir::ExprPtr piece) {
+    if (!result) {
+      result = std::move(piece);
+      return;
+    }
+    auto concat =
+        std::make_unique<ir::Expr>(ir::Expr::Kind::Binary, ir::Type::str(), expr.span);
+    concat->binaryOp = BinaryOp::Add;
+    concat->lhs = std::move(result);
+    concat->rhs = std::move(piece);
+    result = std::move(concat);
+  };
+
+  const std::size_t count = expr.arguments.size();
+  for (std::size_t i = 0; i < count; ++i) {
+    if (i < expr.parts.size() && !expr.parts[i].empty()) {
+      append(stringLiteral(expr.parts[i], expr.span));
+    }
+
+    const ast::Expr& argument = *expr.arguments[i];
+    ir::ExprPtr value = checkExpr(argument, std::nullopt);
+    if (value->type.kind() == ir::TypeKind::Error) {
+      continue;
+    }
+    if (value->type == ir::Type::str()) {
+      append(std::move(value));
+      continue;
+    }
+    if (value->type.isInteger() || value->type == ir::Type::boolean()) {
+      const bool isInteger = value->type.isInteger();
+      auto converted = std::make_unique<ir::Expr>(ir::Expr::Kind::Call, ir::Type::str(),
+                                                  argument.span);
+      converted->builtin = isInteger ? ir::Builtin::StrOfI64 : ir::Builtin::StrOfBool;
+      converted->name = isInteger ? "str_of_i64" : "str_of_bool";
+      converted->arguments.push_back(std::move(value));
+      append(std::move(converted));
+      continue;
+    }
+    diagnostics_.error(currentFile_, argument.span,
+                       "cannot put a value of type '" +
+                           ir::typeName(value->type, *module_) + "' into a string literal");
+    diagnostics_.note(currentFile_, argument.span,
+                      "a string literal interpolates str, integers, and bool; convert the value "
+                      "first, for example with str_of_i64");
+  }
+  if (!expr.parts.empty() && !expr.parts.back().empty()) {
+    append(stringLiteral(expr.parts.back(), expr.span));
+  }
+  if (!result) {
+    return stringLiteral(std::string(), expr.span);
+  }
+  return result;
 }
 
 void SemanticAnalyzer::pushScope() { scopes_.emplace_back(); }
@@ -1551,12 +1886,43 @@ void SemanticAnalyzer::reportTypeMismatch(SourceSpan span, const std::string& co
                      "type mismatch in " + context + ": expected '" +
                          ir::typeName(expected, *module_) + "', found '" +
                          ir::typeName(actual, *module_) + "'");
+  if (expected.isInteger() && actual.isInteger()) {
+    diagnostics_.note(currentFile_, span,
+                      "Gable does not convert between number types on its own; write an "
+                      "explicit conversion with 'as', for example 'value as " +
+                          ir::typeName(expected, *module_) + "'");
+  }
 }
 
 bool SemanticAnalyzer::alwaysReturns(const std::vector<ir::StmtPtr>& statements) const {
   for (const auto& statement : statements) {
     if (stmtAlwaysReturns(*statement)) {
       return true;
+    }
+  }
+  return false;
+}
+
+bool SemanticAnalyzer::alwaysDiverges(const std::vector<ir::StmtPtr>& statements) const {
+  for (const auto& statement : statements) {
+    switch (statement->kind) {
+      case ir::Stmt::Kind::Return:
+      case ir::Stmt::Kind::Break:
+      case ir::Stmt::Kind::Continue:
+        return true;
+      case ir::Stmt::Kind::Block:
+        if (alwaysDiverges(statement->body)) {
+          return true;
+        }
+        break;
+      case ir::Stmt::Kind::If:
+        if (statement->hasElse && alwaysDiverges(statement->body) &&
+            alwaysDiverges(statement->elseBody)) {
+          return true;
+        }
+        break;
+      default:
+        break;
     }
   }
   return false;

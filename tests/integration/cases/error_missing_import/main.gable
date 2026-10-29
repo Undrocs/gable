@@ -1,5 +1,4 @@
 import "absent.gable";
 
-fn main() -> i32 {
-    return 0;
+fn main() {
 }

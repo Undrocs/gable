@@ -57,13 +57,13 @@ typedef struct {
   bool ok;
   gable_str text;
   gable_str error;
-  int32_t code;
+  int64_t code;
 } gable_rt_FileReadResult;
 
 typedef struct {
   bool ok;
   gable_str error;
-  int32_t code;
+  int64_t code;
 } gable_rt_FileWriteResult;
 
 typedef struct {
@@ -194,8 +194,8 @@ gable_list gable_rt_str_split(gable_str text, gable_str separator);
 /* Joins `parts` with `separator` between them. The result is a new string. */
 gable_str gable_rt_str_join(gable_list parts, gable_str separator);
 
-/* Strings. Concatenation allocates and the result lives until the process
- * exits: Gable v0.2 has no memory reclamation (docs/specification.md). */
+/* Strings. Concatenation allocates on the collector-managed heap and the result
+ * lives until the program can no longer reach it (docs/specification.md §12). */
 bool gable_rt_str_eq(gable_str lhs, gable_str rhs);
 gable_str gable_rt_str_concat(gable_str lhs, gable_str rhs);
 gable_str gable_rt_str_of_i64(int64_t value);
@@ -211,8 +211,8 @@ gable_str gable_rt_str_trim(gable_str text);
  * UTF-8, because Gable strings are UTF-8. POSIX hosts pass byte sequences
  * through unchanged. */
 void gable_rt_set_args(int argc, char **argv);
-int32_t gable_rt_arg_count(void);
-gable_str gable_rt_arg(int32_t index);
+int64_t gable_rt_arg_count(void);
+gable_str gable_rt_arg(int64_t index);
 
 /* Files. The whole file is read into memory; failures are reported through the
  * returned struct rather than by trapping. */

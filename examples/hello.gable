@@ -1,5 +1,4 @@
 // The smallest useful Gable program.
-fn main() -> i32 {
-    print("Hello from Gable!");
-    return 0;
+fn main() {
+    print("Hello from Gable!")
 }

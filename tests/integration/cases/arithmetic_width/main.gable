@@ -1,7 +1,7 @@
 // Integer arithmetic is defined at the width of its operands. Every result below
 // is the mathematical result reduced to the bits the type holds, which is what
 // makes overflow a defined wrap rather than C's undefined behaviour.
-fn main() -> i32 {
+fn main() {
     let max_u8: u8 = 255;
     print(max_u8 + 1);
     print((max_u8 + 1) == 0);
@@ -53,7 +53,6 @@ fn main() -> i32 {
     let unsigned_short: u16 = 65535;
     print(unsigned_short as i16);
     print(0 as u8);
-    return 0;
 }
 
 fn min_i16() -> i16 {
