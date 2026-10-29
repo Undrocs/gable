@@ -514,11 +514,12 @@ GABLE_TEST(sema_accepts_fixed_size_arrays) {
   GABLE_CHECK(analysis.ok());
 }
 
-GABLE_TEST(sema_infers_the_type_of_a_fixed_array_literal) {
-  // The elements agree, so no annotation is needed: the literal is a fixed
-  // array of three ints and can be indexed like any other array.
+GABLE_TEST(sema_infers_the_type_of_a_list_literal) {
+  // The elements agree, so no annotation is needed: the literal is a growable
+  // list of ints, and it can grow and be joined like any other list.
   const auto analysis = analyze(
       inMain("  let values = [1, 2, 3];\n"
+             "  values.push(4);\n"
              "  print(values[1]);\n"
              "  print(values.len);\n"
              "  return 0;"));

@@ -1483,6 +1483,8 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
   if (!expected) {
     // Nothing says what the literal holds, but its elements may still agree:
     // `for name in ["ada", "grace"]` and `let xs = [1, 2, 3]` are unambiguous.
+    // The result is a growable list, the container a program reaches for by
+    // default; a fixed array is always spelled out in the type.
     std::vector<ir::ExprPtr> elements;
     ir::Type elementType = ir::Type::error();
     bool agrees = true;
@@ -1499,10 +1501,9 @@ ir::ExprPtr SemanticAnalyzer::checkArrayLiteral(const ast::Expr& expr,
     }
     if (agrees && elementType.kind() != ir::TypeKind::Error && !elements.empty() &&
         elementType.kind() != ir::TypeKind::Void) {
-      const ir::Type arrayType =
-          module_->types.array(elementType, static_cast<std::uint64_t>(elements.size()));
+      const ir::Type listType = module_->types.list(elementType);
       auto lowered =
-          std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, arrayType, expr.span);
+          std::make_unique<ir::Expr>(ir::Expr::Kind::ArrayLiteral, listType, expr.span);
       lowered->arguments = std::move(elements);
       return lowered;
     }
